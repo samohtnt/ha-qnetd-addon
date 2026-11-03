@@ -158,8 +158,8 @@ for n in "$node1:$node1_ip:node1" "$node2:$node2_ip:node2"; do
     && ssh-keygen -q -t rsa -b 3072 -N "" -f /root/.ssh/id_rsa \
     && printf "Host *\n  StrictHostKeyChecking accept-new\n" >/root/.ssh/config && /usr/sbin/sshd'
 done
-in_node1 cat /root/.ssh/id_rsa.pub | in_node2 sh -c 'cat >>/root/.ssh/authorized_keys'
-in_node2 cat /root/.ssh/id_rsa.pub | in_node1 sh -c 'cat >>/root/.ssh/authorized_keys'
+in_node1 cat /root/.ssh/id_rsa.pub | docker exec -i "$node2" sh -c 'cat >>/root/.ssh/authorized_keys'
+in_node2 cat /root/.ssh/id_rsa.pub | docker exec -i "$node1" sh -c 'cat >>/root/.ssh/authorized_keys'
 docker cp qdevice-setup.sh "$node1:/usr/local/bin/qdevice-setup.sh"
 in_node1 pvecm fake-write-conf "$dead_qnetd"
 for n in "$node1" "$node2"; do docker exec -d "$n" sh -c 'corosync -f >/tmp/corosync.log 2>&1'; done
