@@ -1,0 +1,22 @@
+name: Proxmox QNetd
+version: "1.0.0"
+slug: qnetd
+description: Corosync QNetd tie-breaker vote for a two-node Proxmox VE cluster
+arch:
+  - aarch64
+  - amd64
+startup: services
+boot: auto
+init: false
+watchdog: tcp://[HOST]:[PORT:5403]
+ports:
+  5403/tcp: 5403
+  22/tcp: null
+ports_description:
+  5403/tcp: QNetd (corosync quorum device)
+  22/tcp: Setup-only SSH for pvecm qdevice setup
+options:
+  setup_ssh: false
+schema:
+  setup_ssh: bool
+  authorized_key: str?

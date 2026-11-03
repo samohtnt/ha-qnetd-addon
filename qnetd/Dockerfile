@@ -1,0 +1,15 @@
+FROM debian:trixie-slim
+
+# Versions stay unpinned on purpose: a rebuild should pick up Debian security updates.
+# The package postinst creates a CA in the image. Drop it so every install makes its own CA
+# under /data, which Home Assistant persists and backs up.
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      corosync-qnetd openssh-server jq \
+ && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \
+ && rm -rf /etc/corosync/qnetd \
+ && ln -s /data/qnetd /etc/corosync/qnetd
+
+COPY run.sh /run.sh
+CMD ["/bin/bash", "/run.sh"]

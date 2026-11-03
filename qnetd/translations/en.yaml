@@ -1,0 +1,15 @@
+configuration:
+  setup_ssh:
+    name: Setup SSH
+    description: >-
+      Start a key-only SSH server for root so that pvecm qdevice setup can reach
+      the add-on. Map port 22 in the Network section while this is on. Turn it
+      off after setup.
+  authorized_key:
+    name: Authorized key
+    description: >-
+      The public key that pvecm uses, which is the full contents of
+      /root/.ssh/id_rsa.pub on the Proxmox node where you run the setup.
+network:
+  5403/tcp: QNetd (corosync quorum device)
+  22/tcp: Setup-only SSH for pvecm qdevice setup
