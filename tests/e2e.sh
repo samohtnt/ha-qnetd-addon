@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end proof of the qnetd add-on, using Docker on an amd64 host.
+# End-to-end proof of the qnetd add-on, using Docker. Set DOCKER_DEFAULT_PLATFORM to test another platform.
 # A second container plays the Proxmox node and replays what pvecm qdevice setup does.
 set -euo pipefail
 # Git Bash rewrites arguments that look like POSIX paths (/data, /etc/...) into Windows paths.
@@ -15,7 +15,7 @@ vol="$run_id"
 addon="$run_id-addon"
 client="$run_id-client"
 cluster=e2e
-# Fixed addresses, so the add-on keeps its IP across restarts like the HA Green keeps its LAN IP.
+# Fixed addresses, so the add-on keeps its IP across restarts like a Home Assistant device with a fixed LAN address.
 subnet=10.254.254.0/24
 addon_ip=10.254.254.10
 client_ip=10.254.254.20
@@ -42,7 +42,7 @@ in_client() { docker exec "$client" "$@"; }
 wait_for() {
   local what="$1"
   shift
-  for _ in $(seq 30); do
+  for _ in $(seq "${E2E_WAIT:-30}"); do
     if "$@" >/dev/null 2>&1; then return 0; fi
     sleep 1
   done
