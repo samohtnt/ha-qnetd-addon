@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# End-to-end proof of the qnetd add-on, using Docker. Set DOCKER_DEFAULT_PLATFORM to test another platform.
+# End-to-end proof of the qnetd add-on, using Docker.
+# Set ADDON_PLATFORM (for example linux/arm64) to build and run only the add-on for another platform.
 # A second container plays the Proxmox node and replays what pvecm qdevice setup does.
 set -euo pipefail
 # Git Bash rewrites arguments that look like POSIX paths (/data, /etc/...) into Windows paths.
@@ -15,6 +16,10 @@ vol="$run_id"
 addon="$run_id-addon"
 client="$run_id-client"
 cluster=e2e
+# The node stays native, like a real amd64 Proxmox host talking to an aarch64 Home Assistant device.
+native="linux/$(docker version -f '{{.Server.Arch}}')"
+platform=(--platform "${ADDON_PLATFORM:-$native}")
+node_platform=(--platform "$native")
 # Fixed addresses, so the add-on keeps its IP across restarts like a Home Assistant device with a fixed LAN address.
 subnet=10.254.254.0/24
 addon_ip=10.254.254.10
@@ -51,12 +56,12 @@ wait_for() {
 }
 
 write_options() {
-  docker run --rm -i -v "$vol:/data" --entrypoint sh "$image" -c 'cat >/data/options.json'
+  docker run --rm -i -v "$vol:/data" --entrypoint sh "${platform[@]}" "$image" -c 'cat >/data/options.json'
 }
 
 start_addon() {
   docker run -d --name "$addon" --network "$net" --ip "$addon_ip" \
-    -p 5403 -p 22 -v "$vol:/data" "$image" >/dev/null
+    -p 5403 -p 22 -v "$vol:/data" "${platform[@]}" "$image" >/dev/null
   wait_for "qnetd to answer corosync-qnetd-tool -s" in_addon corosync-qnetd-tool -s
   wait_for "the health check to report healthy" addon_healthy
 }
@@ -80,7 +85,7 @@ published() {
 # published ports the way the LAN does. Engines with a host firewall drop bridge-to-host traffic,
 # so the client container cannot use host.docker.internal for this.
 from_host() {
-  in_client cat /root/.ssh/id_rsa | docker run --rm -i --network host "$client_image" bash -c \
+  in_client cat /root/.ssh/id_rsa | docker run --rm -i --network host "${node_platform[@]}" "$client_image" bash -c \
     'install -d -m 700 /root/.ssh && cat >/root/.ssh/id_rsa && chmod 600 /root/.ssh/id_rsa && exec "$@"' _ "$@"
 }
 
@@ -106,9 +111,9 @@ for f in qnetd/run.sh tests/e2e.sh; do
 done
 
 step "1. Image builds"
-docker build -q -t "$image" qnetd >/dev/null || fail "add-on image build"
+docker build -q "${platform[@]}" -t "$image" qnetd >/dev/null || fail "add-on image build"
 pass "add-on image $image built from qnetd/Dockerfile"
-docker build -q -t "$client_image" - >/dev/null <<'EOF' || fail "client image build"
+docker build -q "${node_platform[@]}" -t "$client_image" - >/dev/null <<'EOF' || fail "client image build"
 FROM debian:trixie-slim
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -121,7 +126,7 @@ docker network create --subnet "$subnet" "$net" >/dev/null
 docker volume create "$vol" >/dev/null
 # knet forces its socket buffer size with SO_RCVBUFFORCE, which needs CAP_NET_ADMIN, as on a real node.
 docker run -d --name "$client" --hostname node1 --network "$net" --ip "$client_ip" --cap-add NET_ADMIN \
-  "$client_image" sleep infinity >/dev/null
+  "${node_platform[@]}" "$client_image" sleep infinity >/dev/null
 in_client sh -c 'mkdir -p -m 700 /root/.ssh /etc/pve \
   && ssh-keygen -q -t rsa -b 3072 -N "" -f /root/.ssh/id_rsa \
   && printf "StrictHostKeyChecking accept-new\n" >/root/.ssh/config'

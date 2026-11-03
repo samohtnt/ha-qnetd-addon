@@ -31,7 +31,7 @@ You need a two-node Proxmox VE cluster, root shell access to one node, and a fix
 bash tests/e2e.sh
 ```
 
-To test another platform, set `DOCKER_DEFAULT_PLATFORM`, for example `DOCKER_DEFAULT_PLATFORM=linux/arm64`. On an `amd64` host that needs QEMU emulation, and `E2E_WAIT=180` gives the slower emulated services time to start.
+To test the add-on for another platform, set `ADDON_PLATFORM`, for example `ADDON_PLATFORM=linux/arm64`. Only the add-on runs on that platform. The node container stays native, as a real `amd64` Proxmox host would. On an `amd64` host that needs QEMU emulation, and `E2E_WAIT=180` gives the slower emulated add-on time to start.
 
 The script lints `run.sh`, `e2e.sh`, and the `Dockerfile` with the `koalaman/shellcheck` and `hadolint/hadolint` images. It then builds the add-on image and a second image that plays a Proxmox node. With those it checks the following:
 
