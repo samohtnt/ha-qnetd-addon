@@ -163,6 +163,10 @@ if out="$(from_host ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o PubkeyAu
 fi
 grep -q 'Permission denied (publickey)' <<<"$out" || fail "password probe: $out"
 pass "login without the key is refused and the server offers only publickey: $(tail -n 1 <<<"$out")"
+fingerprint="$(from_host sh -c "ssh-keyscan -t ed25519 -p $port $host 2>/dev/null | ssh-keygen -lf - | cut -d' ' -f2")"
+logged="$(docker logs "$addon" 2>&1 | grep 'SSH host key:')"
+[[ -n "$fingerprint" && "$logged" == *"$fingerprint"* ]] || fail "add-on log does not show host key $fingerprint"
+pass "add-on log shows the host key the client sees: $fingerprint"
 hostkey_before="$(from_host ssh-keyscan -t ed25519 -p "$port" "$host" 2>/dev/null | awk '{print $3}')"
 stop_addon
 start_addon
