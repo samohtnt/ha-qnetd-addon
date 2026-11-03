@@ -105,17 +105,18 @@ banner() { docker logs "$addon" 2>&1 | grep -- '--code ' | tail -n 1; }
 banner_code() { banner | sed -n 's/.* --code \([^ ]*\) .*/\1/p'; }
 banner_key() { banner | sed -n 's/.* --host-key \([^ ]*\)$/\1/p'; }
 
-# Logs in as the pair user with a password, the way qdevice-setup.sh does.
+# Logs in as the pair user with a password, the way qdevice-setup.sh does. The refusal tests run
+# from node2, so that the per-source penalties sshd gives failed logins never slow down node1.
 pair_login() {
   local password="$1"
   shift
-  printf '#!/bin/sh\necho %s\n' "$password" | docker exec -i "$node1" sh -c 'cat >/tmp/askpass && chmod 700 /tmp/askpass'
-  docker exec -e SSH_ASKPASS=/tmp/askpass -e SSH_ASKPASS_REQUIRE=force -e DISPLAY=none "$node1" \
+  printf '#!/bin/sh\necho %s\n' "$password" | docker exec -i "$node2" sh -c 'cat >/tmp/askpass && chmod 700 /tmp/askpass'
+  docker exec -e SSH_ASKPASS=/tmp/askpass -e SSH_ASKPASS_REQUIRE=force -e DISPLAY=none "$node2" \
     ssh -p "$pairing_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no \
     -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 "pair@$addon_ip" "$@"
 }
 root_login() {
-  in_node1 ssh -p "$pairing_port" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  in_node2 ssh -p "$pairing_port" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     "root@$addon_ip" "$@"
 }
 
@@ -160,7 +161,7 @@ for n in "$node1:$node1_ip:node1" "$node2:$node2_ip:node2"; do
 done
 in_node1 cat /root/.ssh/id_rsa.pub | docker exec -i "$node2" sh -c 'cat >>/root/.ssh/authorized_keys'
 in_node2 cat /root/.ssh/id_rsa.pub | docker exec -i "$node1" sh -c 'cat >>/root/.ssh/authorized_keys'
-docker cp qdevice-setup.sh "$node1:/usr/local/bin/qdevice-setup.sh"
+for n in "$node1" "$node2"; do docker cp qdevice-setup.sh "$n:/usr/local/bin/qdevice-setup.sh"; done
 in_node1 pvecm fake-write-conf "$dead_qnetd"
 for n in "$node1" "$node2"; do docker exec -d "$n" sh -c 'corosync -f >/tmp/corosync.log 2>&1'; done
 wait_for "the cluster to be quorate" quorate
@@ -196,11 +197,13 @@ pass "a wrong pairing code is refused: $(tail -n 1 <<<"$out")"
 out="$(pair_login "$code" id 2>&1 </dev/null || true)"
 [[ "$out" != *uid=* && "$out" == *"send one OpenSSH public key"* ]] || fail "pair ran a command: $out"
 pass "the pair user can only enrol a key: $(tail -n 1 <<<"$out")"
-out="$(in_node1 qdevice-setup.sh "$addon_ip" --code "$code" --host-key SHA256:wrongwrongwrong --yes 2>&1)" &&
+out="$(in_node2 qdevice-setup.sh "$addon_ip" --code "$code" --host-key SHA256:wrongwrongwrong --yes 2>&1)" &&
   fail "setup accepted a wrong host key"
 [[ "$out" == *"Nothing was sent"* ]] || fail "wrong host key: $out"
 if root_login true 2>/dev/null; then fail "a key got enrolled despite the wrong host key"; fi
-pass "qdevice-setup.sh stops on a wrong host key before it sends the code"
+[ "$(in_node1 corosync-cmapctl -g quorum.device.net.host | sed 's/.*= //')" = "$dead_qnetd" ] ||
+  fail "the wrong-host-key run changed the cluster"
+pass "qdevice-setup.sh stops on a wrong host key before it sends the code or changes the cluster"
 
 step "5. qdevice-setup.sh from node1"
 in_node1 qdevice-setup.sh "$addon_ip" --code "$code" --host-key "$key" --yes 2>&1 | sed 's/^/  | /' ||
