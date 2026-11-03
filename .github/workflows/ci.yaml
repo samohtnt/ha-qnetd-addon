@@ -24,9 +24,6 @@ jobs:
       matrix:
         platform: [linux/amd64, linux/arm64]
     runs-on: ubuntu-latest
-    env:
-      # docker build and docker run both honor this, so the whole test runs on the matrix platform.
-      DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
       - if: matrix.platform == 'linux/arm64'
@@ -35,4 +32,6 @@ jobs:
           platforms: arm64
       - run: bash tests/e2e.sh
         env:
+          # Set on this step only: the QEMU setup step must pull its own image for the runner.
+          DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
           E2E_WAIT: ${{ matrix.platform == 'linux/arm64' && 180 || 30 }}

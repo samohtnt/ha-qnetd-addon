@@ -34,6 +34,7 @@ pass() { printf 'PASS  %s\n' "$*"; }
 fail() {
   printf 'FAIL  %s\n' "$*" >&2
   docker logs "$addon" 2>/dev/null | tail -n 30 | sed 's/^/  addon log: /' >&2 || true
+  docker exec "$client" sh -c 'tail -n 30 /tmp/*.log' 2>/dev/null | sed 's/^/  node log: /' >&2 || true
   exit 1
 }
 in_addon() { docker exec "$addon" "$@"; }
@@ -231,9 +232,9 @@ logging {
   to_syslog: no
 }
 EOF
-docker exec -d "$client" corosync -f
+docker exec -d "$client" sh -c 'corosync -f >/tmp/corosync.log 2>&1'
 wait_for "corosync" in_client corosync-cmapctl totem.cluster_name
-docker exec -d "$client" corosync-qdevice -f
+docker exec -d "$client" sh -c 'corosync-qdevice -f >/tmp/corosync-qdevice.log 2>&1'
 cluster_listed() { in_addon corosync-qnetd-tool -l | grep -q "Cluster \"$cluster\""; }
 wait_for "qnetd to list cluster $cluster" cluster_listed
 in_addon corosync-qnetd-tool -l | sed 's/^/  /'
