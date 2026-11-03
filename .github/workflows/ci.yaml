@@ -32,6 +32,5 @@ jobs:
           platforms: arm64
       - run: bash tests/e2e.sh
         env:
-          # Set on this step only: the QEMU setup step must pull its own image for the runner.
-          DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
+          ADDON_PLATFORM: ${{ matrix.platform }}
           E2E_WAIT: ${{ matrix.platform == 'linux/arm64' && 180 || 30 }}
