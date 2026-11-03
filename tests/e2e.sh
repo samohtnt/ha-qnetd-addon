@@ -66,7 +66,8 @@ write_options() {
 }
 
 start_addon() {
-  docker run -d --name "$addon" --network "$net" --ip "$addon_ip" \
+  # --init, because Home Assistant starts add-ons with an init process as PID 1 unless config.yaml sets init: false.
+  docker run -d --init --name "$addon" --network "$net" --ip "$addon_ip" \
     -p 5403 -p "$pairing_port" -v "$vol:/data" "${platform[@]}" "$image" >/dev/null
   wait_for "qnetd to answer corosync-qnetd-tool -s" in_addon corosync-qnetd-tool -s
   wait_for "the health check to report healthy" addon_healthy
@@ -171,9 +172,10 @@ pass "nodes quorate with a QDevice configured at $dead_qnetd and a stale certifi
 step "3. Fresh install opens pairing"
 printf '{"open_pairing": false}' | write_options
 start_addon
-pid1="$(in_addon cat /proc/1/comm) as $(in_addon stat -c %U /proc/1)"
-[ "$pid1" = "corosync-qnetd as coroqnetd" ] || fail "PID 1 is $pid1"
-pass "PID 1 is $pid1"
+# shellcheck disable=SC2016 # $p expands in the add-on's shell
+qnetd_user="$(in_addon sh -c 'for p in /proc/[0-9]*; do [ "$(cat "$p/comm")" = corosync-qnetd ] && stat -c %U "$p"; done; true')"
+[ "$qnetd_user" = coroqnetd ] || fail "corosync-qnetd runs as '$qnetd_user'"
+pass "corosync-qnetd runs as coroqnetd"
 read -r host port <<<"$(published 5403/tcp)"
 from_host timeout 5 bash -c "</dev/tcp/$host/$port" || fail "TCP 5403 via $host:$port"
 pass "TCP 5403 accepts connections through the published port $host:$port"
@@ -215,6 +217,8 @@ pass "qnetd lists cluster \"e2e\""
 [ "$(in_node1 corosync-cmapctl -g quorum.device.net.host | sed 's/.*= //')" = "$addon_ip" ] || fail "device host"
 pass "the dead QDevice was replaced by $addon_ip"
 wait_for "sshd to stop" sshd_stopped
+zombies="$(in_addon sh -c 'grep -l "^State:.*Z" /proc/[0-9]*/status 2>/dev/null | wc -l')"
+[ "$zombies" -eq 0 ] || fail "$zombies zombie processes in the add-on"
 port_refused "$pairing_port" || fail "pairing port still open"
 docker logs "$addon" 2>&1 | grep -q 'Pairing closed: set up from node1' || fail "no close message in the log"
 pass "pairing closed and logged it"
