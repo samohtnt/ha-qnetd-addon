@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Replace the port watchdog with a Docker health check that runs `corosync-qnetd-tool -s`.
+- Generic setup guide with a troubleshooting table.
+
 ## 1.0.0
 
 - First release. Runs corosync-qnetd from Debian trixie as the `coroqnetd` user.

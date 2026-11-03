@@ -1,14 +1,13 @@
 name: Proxmox QNetd
-version: "1.0.0"
+version: "1.0.1"
 slug: qnetd
 description: Corosync QNetd tie-breaker vote for a two-node Proxmox VE cluster
+url: https://github.com/samohtnt/ha-qnetd-addon
 arch:
   - aarch64
   - amd64
 startup: services
-boot: auto
 init: false
-watchdog: tcp://[HOST]:[PORT:5403]
 ports:
   5403/tcp: 5403
   22/tcp: null

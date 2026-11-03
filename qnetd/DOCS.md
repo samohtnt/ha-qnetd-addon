@@ -85,7 +85,7 @@ Do not test by rebooting a node outside a maintenance window.
 - Probe `HA_IP:5403` over TCP, for example with a Prometheus blackbox `tcp_connect` probe. Alert when it fails for 10 minutes.
 - Alert when the QDevice state in the Proxmox API is not connected for 10 minutes.
 
-The add-on also has a Home Assistant watchdog on port 5403. Home Assistant restarts the add-on when the port stops answering.
+The add-on also has a health check that asks `corosync-qnetd` for its status every 30 seconds. Turn on **Watchdog** on the add-on page, and Home Assistant restarts the add-on when the check fails.
 
 ## Troubleshooting
 
