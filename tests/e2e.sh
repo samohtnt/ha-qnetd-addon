@@ -231,6 +231,16 @@ if root_login true 2>/dev/null; then fail "a key got enrolled despite the wrong 
 [ "$(in_node1 corosync-cmapctl -g quorum.device.net.host | sed 's/.*= //')" = "$dead_qnetd" ] ||
   fail "the wrong-host-key run changed the cluster"
 pass "qdevice-setup.sh stops on a wrong host key before it sends the code or changes the cluster"
+out="$(in_node2 qdevice-setup.sh "$addon_ip" --code "$code" --host-key "$key" --dry-run 2>&1)" || fail "dry run: $out"
+[[ "$out" == *"Planned changes"* && "$out" == *"pvecm qdevice remove"* && "$out" == *"Dry run: nothing was changed."* ]] ||
+  fail "dry run output: $out"
+[ "$(in_node1 corosync-cmapctl -g quorum.device.net.host | sed 's/.*= //')" = "$dead_qnetd" ] || fail "the dry run changed the cluster"
+if in_node2 grep -q qnetd-pairing /root/.ssh/config; then fail "the dry run touched the ssh config"; fi
+pass "--dry-run lists the planned changes and changes nothing"
+out="$(in_node2 qdevice-setup.sh "$addon_ip" --code "$code" --host-key "$key" 2>&1)" && fail "ran without a terminal or --yes"
+[[ "$out" == *"Run again with --yes"* ]] || fail "no-terminal run: $out"
+[ "$(in_node1 corosync-cmapctl -g quorum.device.net.host | sed 's/.*= //')" = "$dead_qnetd" ] || fail "the no-terminal run changed the cluster"
+pass "without a terminal and without --yes it stops before changing anything"
 
 step "5. qdevice-setup.sh from node1"
 config_before="$(in_node1 sha256sum /root/.ssh/config)"
