@@ -43,8 +43,6 @@ if [ "$(jq -r '.setup_ssh // false' "$options")" = true ]; then
   /usr/sbin/sshd -D -e "${sshd_opts[@]}" &
   echo "Setup SSH is ON. Turn setup_ssh off once pvecm qdevice setup has finished."
   echo "SSH host key: $(ssh-keygen -lf /data/ssh/ssh_host_ed25519_key.pub)"
-else
-  rm -f /root/.ssh/authorized_keys
 fi
 
 exec setpriv --reuid=coroqnetd --regid=coroqnetd --init-groups corosync-qnetd -f
