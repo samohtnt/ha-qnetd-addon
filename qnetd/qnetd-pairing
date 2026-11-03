@@ -91,7 +91,7 @@ open_pairing() {
   echo $(( $(date +%s) + minutes * 60 )) >"$deadline"
   chown pair:pair "$deadline"
   (
-    while [ -f "$pidfile" ] && [ "$(date +%s)" -lt "$(cat "$deadline")" ]; do sleep 5; done
+    while [ "$(date +%s)" -lt "$(cat "$deadline")" ]; do sleep 5; done
     "$0" close "the pairing window ended"
   ) &
 
