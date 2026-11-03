@@ -10,6 +10,7 @@ set -euo pipefail
 
 cluster=e2e
 node_ips=(10.254.254.20 10.254.254.21)
+node_names=(node1 node2)
 self="$(hostname -i | awk '{print $1}')"
 db_dir_node=/etc/corosync/qdevice/net/nssdb
 db_dir_qnetd=/etc/corosync/qnetd/nssdb
@@ -18,15 +19,29 @@ die() {
   echo "$*" >&2
   exit 255
 }
+# The ssh options of PVE::SSHInfo, which pvecm uses between nodes.
+node_opts() {
+  local i name
+  for i in "${!node_ips[@]}"; do [ "${node_ips[i]}" = "$1" ] && name="${node_names[i]}"; done
+  printf '%s\n' -o BatchMode=yes -o "HostKeyAlias=$name" \
+    -o "UserKnownHostsFile=/etc/pve/nodes/$name/ssh_known_hosts" -o GlobalKnownHostsFile=none
+}
 on() {
-  local ip="$1"
+  local ip="$1" opts
   shift
-  if [ "$ip" = "$self" ]; then "$@"; else ssh -o BatchMode=yes "root@$ip" -- "$(printf '%q ' "$@")"; fi
+  if [ "$ip" = "$self" ]; then
+    "$@"
+  else
+    mapfile -t opts < <(node_opts "$ip")
+    ssh -e none "${opts[@]}" "root@$ip" -- "$(printf '%q ' "$@")"
+  fi
 }
 share() {
-  local ip
+  local ip opts
   for ip in "${node_ips[@]}"; do
-    [ "$ip" = "$self" ] || scp -q -o BatchMode=yes "/etc/pve/$1" "root@$ip:/etc/pve/$1"
+    [ "$ip" != "$self" ] || continue
+    mapfile -t opts < <(node_opts "$ip")
+    scp -q "${opts[@]}" "/etc/pve/$1" "root@$ip:/etc/pve/$1"
   done
 }
 unshare() {

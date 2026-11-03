@@ -7,7 +7,7 @@ The add-on keeps its certificate database in `/data/qnetd`. Home Assistant keeps
 ## Set up the QDevice
 
 1. Install and start the add-on.
-2. Open the **Log** tab. It shows a command that starts with `bash <(curl`.
+2. Open the **Log** tab. It shows a command that starts with `curl -fsSLo /tmp/qdevice-setup.sh`.
 3. Copy that command. On one Proxmox node, open a root shell and paste it.
 
 That is all. The command checks the cluster, sets up the QDevice on every node, checks the vote, and closes pairing on the add-on. It asks before it removes or installs anything. If it stops with an error, fix the problem it names and paste the same command again.
@@ -20,21 +20,23 @@ That is all. The command checks the cluster, sets up the QDevice on every node, 
 
 ### What the command does
 
-The command downloads `qdevice-setup.sh` from this repository, at the tag that matches the add-on version, and runs it with these steps:
+The command downloads `qdevice-setup.sh` from this repository, at the tag that matches the add-on version, and runs it. The script does these steps:
 
 1. Checks that the cluster is quorate, that every node is online and reaches Home Assistant on port 5403, and that `corosync-qdevice` is installed. It offers to install the package where it is missing.
-2. Offers to remove a QDevice that is configured but not working, such as an old tie-breaker that is gone, and leftover QDevice certificates.
+2. Offers to remove a QDevice that does not give every node a vote, such as an old tie-breaker that is gone, and leftover QDevice certificates. It never replaces a working QDevice at another address unless you add `--replace-working`.
 3. Checks that the add-on's SSH host key matches the one in the log, then sends the one-time pairing code and the node's root public key. Nothing is sent if the host key does not match.
 4. Runs `pvecm qdevice setup`. `pvecm` uses SSH on port 22 only, so for the duration of the script a block at the top of `/root/.ssh/config` points it at port 22022 and the pinned host key. The script removes the block when it exits.
 5. Waits until every node counts the QDevice vote, then closes pairing.
 
-To read the script before you run it, open `qdevice-setup.sh` in the repository, or download it and run `bash qdevice-setup.sh --help`.
+The script asks about every change before it pairs, and makes the changes only after pairing works. A wrong address or an old code leaves the cluster as it was.
+
+To read the script before you run it, run only the `curl` part of the command and open `/tmp/qdevice-setup.sh`, or run `bash /tmp/qdevice-setup.sh --help`.
 
 ## Pairing
 
 Pairing is how the Proxmox node gets SSH access to the add-on for `pvecm qdevice setup`, without you copying keys around.
 
-- Pairing opens by itself when the add-on starts and has not set up a cluster yet. It stays open for 60 minutes, or until the setup closes it.
+- Pairing opens by itself when the add-on starts and has not set up a cluster yet. It stays open for 60 minutes, or until the setup closes it. Once a node has enrolled, pairing stays open for at least 15 more minutes, so the setup never loses it halfway.
 - Each time pairing opens, the add-on makes a new code. The code is valid only while pairing is open.
 - While pairing is open, an SSH server listens on port 22022. It accepts the user `pair` with the code, which can only enrol a public key, and `root` with an enrolled key. Closing pairing stops the server and forgets the enrolled keys.
 - Once a cluster is set up, pairing stays closed across restarts. To add a second cluster or redo the setup, turn on `open_pairing`, restart the add-on, and turn it off again afterwards.
@@ -69,10 +71,12 @@ The add-on has a health check that asks `corosync-qnetd` for its status every 30
 
 | Message or symptom | Cause and fix |
 |---|---|
-| `nothing answers on ...:22022` | Pairing is closed or the add-on is stopped. Restart the add-on, or turn on `open_pairing` and restart it, then copy the new command. |
+| `nothing answers on ...:22022` | Pairing is closed or the add-on is stopped. If no cluster is set up yet, restart the add-on. Otherwise turn on `open_pairing` and restart it. Then copy the new command. After several failed attempts, wait a minute: the add-on slows down repeated failed logins. |
 | `the SSH host key ... is ..., but the add-on log says ...` | The command reached another device. Check the IP address in the command. |
 | `the add-on refused the pairing code` | The code is from an earlier start. Copy the command again from the log. |
-| `only N of M nodes are online` | Start every node first. `pvecm qdevice setup` needs all of them. |
+| `offline: ...` | Start every node first. `pvecm qdevice setup` needs all of them. |
+| `cannot reach ... over SSH the way pvecm does` | Root SSH between the nodes is broken. Run `pvecm updatecerts` on each node. |
+| `the cluster already has a working QDevice at ...` | Add `--replace-working` to the command if you mean to move the vote to this add-on. |
 | `... cannot reach ...:5403` | A firewall blocks the node, or the add-on is stopped. |
 | The QDevice state stays `Connect failed` later | A node cannot reach the add-on on 5403, or the Home Assistant IP address changed. |
 | The nodes log TLS or certificate errors after a reinstall | The add-on lost `/data` and made a new CA. See [Recover after data loss](#recover-after-data-loss). |
