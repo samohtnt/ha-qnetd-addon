@@ -8,10 +8,10 @@ The add-on builds on the device from `debian:trixie-slim`, for `aarch64` and `am
 
 1. In Home Assistant, go to **Settings** > **Add-ons** > **Add-on Store**.
 2. Open the menu (three dots) and select **Repositories**.
-3. Add the URL of this repository and select **Add**.
+3. Add `https://github.com/samohtnt/ha-qnetd-addon` and select **Add**.
 4. Install **Proxmox QNetd**, then follow [the add-on documentation](qnetd/DOCS.md) to join it to your cluster.
 
-Before you publish the repository, set `url` in `repository.yaml` to its real URL.
+You need a two-node Proxmox VE cluster, root shell access to one node, and a fixed IP address for Home Assistant. The guide walks through the rest, including removing an old QDevice.
 
 ## Repository layout
 
@@ -21,14 +21,17 @@ Before you publish the repository, set `url` in `repository.yaml` to its real UR
 - `qnetd/run.sh` starts the add-on. It creates the certificate database on first start, starts the setup SSH server when `setup_ssh` is on, and then runs `corosync-qnetd` as the `coroqnetd` user.
 - `qnetd/DOCS.md` is the operator guide that Home Assistant shows on the add-on page.
 - `tests/e2e.sh` is the end-to-end test.
+- `.github/workflows/ci.yaml` runs the Home Assistant add-on linter, and runs the end-to-end test for `amd64` and, under QEMU, for `aarch64`.
 
 ## Run the tests
 
-`tests/e2e.sh` needs Bash and a Docker engine for `linux/amd64`. It runs from Git Bash on Windows too.
+`tests/e2e.sh` needs Bash and a Docker engine. It runs from Git Bash on Windows too.
 
 ```sh
 bash tests/e2e.sh
 ```
+
+To test another platform, set `DOCKER_DEFAULT_PLATFORM`, for example `DOCKER_DEFAULT_PLATFORM=linux/arm64`. On an `amd64` host that needs QEMU emulation, and `E2E_WAIT=180` gives the slower emulated services time to start.
 
 The script lints `run.sh`, `e2e.sh`, and the `Dockerfile` with the `koalaman/shellcheck` and `hadolint/hadolint` images. It then builds the add-on image and a second image that plays a Proxmox node. With those it checks the following:
 
@@ -42,6 +45,9 @@ The script removes its containers, network, and volume when it exits, and it exi
 
 The tests do not cover these things:
 
-- The `aarch64` build. The test host has no `buildx`, so the image was built and tested only for `amd64`.
 - Home Assistant itself: the Supervisor build, the option schema validation, the port mapping in the **Network** section, and the watchdog.
 - A real Proxmox node. The replay copies the `pvecm` commands from `src/PVE/CLI/pvecm.pm` in `pve-cluster`, but it does not run `pvecm`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
