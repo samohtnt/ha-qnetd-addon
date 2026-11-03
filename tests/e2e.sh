@@ -119,7 +119,8 @@ pass "client image $client_image built (plays the Proxmox node)"
 
 docker network create --subnet "$subnet" "$net" >/dev/null
 docker volume create "$vol" >/dev/null
-docker run -d --name "$client" --hostname node1 --network "$net" --ip "$client_ip" \
+# knet forces its socket buffer size with SO_RCVBUFFORCE, which needs CAP_NET_ADMIN, as on a real node.
+docker run -d --name "$client" --hostname node1 --network "$net" --ip "$client_ip" --cap-add NET_ADMIN \
   "$client_image" sleep infinity >/dev/null
 in_client sh -c 'mkdir -p -m 700 /root/.ssh /etc/pve \
   && ssh-keygen -q -t rsa -b 3072 -N "" -f /root/.ssh/id_rsa \
