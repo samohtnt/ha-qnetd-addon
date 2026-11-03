@@ -1,5 +1,5 @@
 name: Proxmox QNetd
-version: "1.0.1"
+version: "1.1.0"
 slug: qnetd
 description: Corosync QNetd tie-breaker vote for a two-node Proxmox VE cluster
 url: https://github.com/samohtnt/ha-qnetd-addon
@@ -8,14 +8,14 @@ arch:
   - amd64
 startup: services
 init: false
+hassio_api: true
 ports:
   5403/tcp: 5403
-  22/tcp: null
+  22022/tcp: 22022
 ports_description:
   5403/tcp: QNetd (corosync quorum device)
-  22/tcp: Setup-only SSH for pvecm qdevice setup
+  22022/tcp: Pairing SSH, open only during setup
 options:
-  setup_ssh: false
+  open_pairing: false
 schema:
-  setup_ssh: bool
-  authorized_key: str?
+  open_pairing: bool

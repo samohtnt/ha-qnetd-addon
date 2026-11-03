@@ -1,0 +1,159 @@
+#!/bin/bash
+# Pairing lets one Proxmox node enrol its root key with a one-time code, so that
+# pvecm qdevice setup can reach the add-on over SSH without any manual key handling.
+#   qnetd-pairing open <minutes>  start the pairing SSH server (root, from run.sh)
+#   qnetd-pairing close [reason]  stop it and forget enrolled keys (root)
+#   qnetd-pairing enroll          sshd ForceCommand for the pair user: read one public key on stdin
+#   qnetd-pairing keys <user>     sshd AuthorizedKeysCommand: print the enrolled keys for root
+set -euo pipefail
+
+state=/run/qnetd-pairing
+keys="$state/keys"
+conf=/run/qnetd-pairing.sshd_config
+pidfile=/run/qnetd-pairing.sshd.pid
+hostkey=/data/ssh/ssh_host_ed25519_key
+port=22022
+max_keys=16
+
+# Writes to the add-on log even when called from an SSH session.
+log() {
+  if [ -w /proc/1/fd/1 ]; then
+    printf '%s\n' "$*" >/proc/1/fd/1
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+new_code() {
+  local alphabet=ABCDEFGHJKMNPQRSTUVWXYZ23456789 code="" byte i
+  for i in $(seq 20); do
+    byte=$(od -An -N1 -tu1 /dev/urandom)
+    # 248 is the largest multiple of 31 below 256, so every character is equally likely.
+    while [ "$byte" -ge 248 ]; do byte=$(od -An -N1 -tu1 /dev/urandom); done
+    code+="${alphabet:byte % 31:1}"
+    if [ $((i % 5)) -eq 0 ] && [ "$i" -lt 20 ]; then code+=-; fi
+  done
+  printf '%s' "$code"
+}
+
+supervisor() {
+  [ -n "${SUPERVISOR_TOKEN:-}" ] || return 1
+  curl -fsS --max-time 5 -H "Authorization: Bearer $SUPERVISOR_TOKEN" "http://supervisor$1"
+}
+
+write_sshd_config() {
+  cat >"$conf" <<EOF
+Port $port
+HostKey $hostkey
+PidFile $pidfile
+UsePAM no
+AllowUsers root pair
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthorizedKeysFile none
+AuthorizedKeysCommand /usr/local/bin/qnetd-pairing keys %u
+AuthorizedKeysCommandUser pair
+MaxAuthTries 3
+LoginGraceTime 30
+MaxStartups 4:50:10
+AllowTcpForwarding no
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+X11Forwarding no
+PermitTunnel no
+Subsystem sftp internal-sftp
+Match User pair
+  PasswordAuthentication yes
+  AuthenticationMethods password
+  PermitTTY no
+  ForceCommand /usr/local/bin/qnetd-pairing enroll
+Match User root
+  AuthenticationMethods publickey
+EOF
+}
+
+open_pairing() {
+  local minutes="$1" code fingerprint ip host_port version
+  install -d -o pair -g pair -m 0700 "$state"
+  install -o pair -g pair -m 0600 /dev/null "$keys"
+  install -d -m 0700 /data/ssh
+  install -d -m 0755 /run/sshd
+  [ -f "$hostkey" ] || ssh-keygen -q -t ed25519 -N '' -f "$hostkey"
+  code="$(new_code)"
+  printf 'pair:%s\n' "$code" | chpasswd
+  write_sshd_config
+  /usr/sbin/sshd -t -f "$conf"
+  /usr/sbin/sshd -D -e -f "$conf" &
+  ( sleep "$((minutes * 60))" && "$0" close "the $minutes-minute pairing window ended" ) &
+
+  fingerprint="$(ssh-keygen -lf "$hostkey.pub" | cut -d' ' -f2)"
+  ip="$(supervisor /network/info | jq -r '[.data.interfaces[] | select(.primary) | .ipv4.address[]?][0] // empty' | cut -d/ -f1)" || ip=""
+  host_port="$(supervisor /addons/self/info | jq -r --arg p "$port/tcp" '.data.network[$p] // empty')" || host_port="$port"
+  version="${BUILD_VERSION:-main}"
+  if [ -z "$host_port" ]; then
+    log "WARNING: port $port/tcp is not mapped. Set it in the Network section, then restart the add-on."
+    host_port="$port"
+  fi
+  log ""
+  log "================================================================"
+  log " Pairing is open for $minutes minutes."
+  log " On one Proxmox node, as root, run:"
+  log ""
+  log "   bash <(curl -fsSL https://raw.githubusercontent.com/samohtnt/ha-qnetd-addon/v$version/qdevice-setup.sh) ${ip:-HA_IP} --port $host_port --code $code --host-key $fingerprint"
+  log ""
+  [ -n "$ip" ] || log " Replace HA_IP with the IP address of this Home Assistant device."
+  log " The command checks the cluster, runs pvecm qdevice setup, and closes pairing."
+  log "================================================================"
+  log ""
+}
+
+close_pairing() {
+  local reason="${1:-closed}"
+  [ -f "$pidfile" ] || return 0
+  : >"$keys" 2>/dev/null || true
+  passwd -l pair >/dev/null
+  kill "$(cat "$pidfile")" 2>/dev/null || true
+  rm -f "$pidfile"
+  log "Pairing closed: $reason."
+}
+
+enroll() {
+  local line tmp fingerprint
+  line="$(head -c 16384 | head -n 1 | tr -d '\r')"
+  if ! [[ "$line" =~ ^(ssh-|ecdsa-sha2-|sk-)[A-Za-z0-9@.-]+\ [A-Za-z0-9+/=]+(\ .*)?$ ]]; then
+    echo "ERROR: send one OpenSSH public key line on stdin" >&2
+    exit 1
+  fi
+  tmp="$(mktemp)"
+  printf '%s\n' "$line" >"$tmp"
+  if ! fingerprint="$(ssh-keygen -lf "$tmp")"; then
+    rm -f "$tmp"
+    echo "ERROR: not a valid public key" >&2
+    exit 1
+  fi
+  rm -f "$tmp"
+  if ! grep -qxF "$line" "$keys"; then
+    if [ "$(wc -l <"$keys")" -ge "$max_keys" ]; then
+      echo "ERROR: $max_keys keys are already enrolled" >&2
+      exit 1
+    fi
+    printf '%s\n' "$line" >>"$keys"
+  fi
+  echo "Enrolled $fingerprint"
+}
+
+case "${1:-}" in
+  open) open_pairing "${2:-60}" ;;
+  close)
+    client="${SSH_CLIENT:-}"
+    client="${client%% *}"
+    close_pairing "${2:-closed from ${client:-the add-on}}"
+    ;;
+  enroll) enroll ;;
+  keys) [ "${2:-}" = root ] && cat "$keys" ;;
+  *)
+    echo "usage: qnetd-pairing open|close|enroll|keys" >&2
+    exit 2
+    ;;
+esac
