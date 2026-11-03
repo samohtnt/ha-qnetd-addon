@@ -1,5 +1,7 @@
 # Proxmox QNetd add-on for Home Assistant
 
+[![CI](https://github.com/samohtnt/ha-qnetd-addon/actions/workflows/ci.yaml/badge.svg)](https://github.com/samohtnt/ha-qnetd-addon/actions/workflows/ci.yaml)
+
 This repository has one Home Assistant add-on, **Proxmox QNetd**. It runs `corosync-qnetd` on a Home Assistant device, so a two-node Proxmox VE cluster has a third vote and keeps quorum when one node is down.
 
 The add-on builds on the device from `debian:trixie-slim`, for `aarch64` and `amd64`. It keeps its certificate database in the add-on's `/data`, which survives Home Assistant OS updates and is part of Home Assistant backups.
@@ -45,7 +47,7 @@ The script removes its containers, network, and volume when it exits, and it exi
 
 The tests do not cover these things:
 
-- Home Assistant itself: the Supervisor build, the option schema validation, the port mapping in the **Network** section, and the watchdog.
+- Home Assistant itself: the Supervisor build, the option schema validation, the port mapping in the **Network** section, and whether the watchdog restarts the add-on when the Docker health check fails.
 - A real Proxmox node. The replay copies the `pvecm` commands from `src/PVE/CLI/pvecm.pm` in `pve-cluster`, but it does not run `pvecm`.
 
 ## License
