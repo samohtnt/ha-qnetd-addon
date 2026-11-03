@@ -74,7 +74,7 @@ EOF
 }
 
 open_pairing() {
-  local minutes="$1" code fingerprint ip host_port version
+  local minutes="$1" code fingerprint ip host_port ref
   install -d -o pair -g pair -m 0700 "$state"
   install -o pair -g pair -m 0600 /dev/null "$keys"
   install -d -m 0700 /data/ssh
@@ -90,7 +90,8 @@ open_pairing() {
   fingerprint="$(ssh-keygen -lf "$hostkey.pub" | cut -d' ' -f2)"
   ip="$(supervisor /network/info | jq -r '[.data.interfaces[] | select(.primary) | .ipv4.address[]?][0] // empty' | cut -d/ -f1)" || ip=""
   host_port="$(supervisor /addons/self/info | jq -r --arg p "$port/tcp" '.data.network[$p] // empty')" || host_port="$port"
-  version="${BUILD_VERSION:-main}"
+  ref=main
+  [ -z "${BUILD_VERSION:-}" ] || ref="v$BUILD_VERSION"
   if [ -z "$host_port" ]; then
     log "WARNING: port $port/tcp is not mapped. Set it in the Network section, then restart the add-on."
     host_port="$port"
@@ -100,7 +101,7 @@ open_pairing() {
   log " Pairing is open for $minutes minutes."
   log " On one Proxmox node, as root, run:"
   log ""
-  log "   bash <(curl -fsSL https://raw.githubusercontent.com/samohtnt/ha-qnetd-addon/v$version/qdevice-setup.sh) ${ip:-HA_IP} --port $host_port --code $code --host-key $fingerprint"
+  log "   bash <(curl -fsSL https://raw.githubusercontent.com/samohtnt/ha-qnetd-addon/$ref/qdevice-setup.sh) ${ip:-HA_IP} --port $host_port --code $code --host-key $fingerprint"
   log ""
   [ -n "$ip" ] || log " Replace HA_IP with the IP address of this Home Assistant device."
   log " The command checks the cluster, runs pvecm qdevice setup, and closes pairing."

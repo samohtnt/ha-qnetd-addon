@@ -137,26 +137,17 @@ if [ "${#unreachable[@]}" -gt 0 ]; then
 fi
 ok "every node reaches $ha_ip:5403"
 
+# Ask about every change now, but make none until pairing has worked, so that a wrong
+# address or an old code leaves the cluster as it was.
+each_node check_stale
 if [ "${#missing[@]}" -gt 0 ]; then
   confirm "Install corosync-qdevice on: $(for i in "${missing[@]}"; do printf '%s ' "${names[i]}"; done)?"
-  for i in "${missing[@]}"; do
-    on_node "$i" sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq corosync-qdevice' >/dev/null
-    ok "installed corosync-qdevice on ${names[i]}"
-  done
 else
   ok "corosync-qdevice is installed on every node"
 fi
-
-if [ -n "$current" ]; then
-  confirm "The cluster has a QDevice at $current that is not working. Remove it?"
-  pvecm qdevice remove
-  ok "removed the QDevice at $current"
-fi
-each_node check_stale
+[ -z "$current" ] || confirm "The cluster has a QDevice at $current that is not working. Remove it?"
 if [ "${#stale[@]}" -gt 0 ]; then
   confirm "Delete leftover QDevice certificates in /etc/corosync/qdevice/net/nssdb on: $(for i in "${stale[@]}"; do printf '%s ' "${names[i]}"; done)?"
-  for i in "${stale[@]}"; do on_node "$i" rm -rf /etc/corosync/qdevice/net/nssdb; done
-  ok "deleted leftover QDevice certificates"
 fi
 
 info "Pairing with the add-on at $ha_ip:$port"
@@ -205,11 +196,27 @@ printf '%s\n' "$code" >"$work/code"
 chmod 0700 "$work/askpass"
 chmod 0600 "$work/code"
 SSH_ASKPASS="$work/askpass" SSH_ASKPASS_REQUIRE=force DISPLAY=none \
-  ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 \
+  ssh -T -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 \
   -l pair "$ha_ip" </root/.ssh/id_rsa.pub >/dev/null ||
   die "the add-on refused the pairing code. Copy the command again from the add-on log. A restart makes a new code."
 ssh -o BatchMode=yes "$ha_ip" true || die "the add-on accepted the code but not the key"
 ok "enrolled this node's root key"
+
+info "Preparing the cluster"
+for i in "${missing[@]}"; do
+  on_node "$i" sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq corosync-qdevice' >/dev/null
+  ok "installed corosync-qdevice on ${names[i]}"
+done
+if [ -n "$current" ]; then
+  pvecm qdevice remove
+  ok "removed the QDevice at $current"
+fi
+stale=()
+each_node check_stale
+for i in "${stale[@]}"; do
+  on_node "$i" rm -rf /etc/corosync/qdevice/net/nssdb
+  ok "deleted leftover QDevice certificates on ${names[i]}"
+done
 
 info "Running pvecm qdevice setup $ha_ip ${pvecm_force[*]}"
 pvecm qdevice setup "$ha_ip" "${pvecm_force[@]}" ||
