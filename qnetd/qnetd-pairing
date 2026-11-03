@@ -9,11 +9,14 @@ set -euo pipefail
 
 state=/run/qnetd-pairing
 keys="$state/keys"
+deadline="$state/deadline"
 conf=/run/qnetd-pairing.sshd_config
 pidfile=/run/qnetd-pairing.sshd.pid
 hostkey=/data/ssh/ssh_host_ed25519_key
 port=22022
 max_keys=16
+# An enrolment keeps pairing open at least this long, so pvecm never loses it halfway.
+grace_seconds=900
 
 # Writes to the add-on log even when called from an SSH session.
 log() {
@@ -85,7 +88,12 @@ open_pairing() {
   write_sshd_config
   /usr/sbin/sshd -t -f "$conf"
   /usr/sbin/sshd -D -e -f "$conf" &
-  ( sleep "$((minutes * 60))" && "$0" close "the $minutes-minute pairing window ended" ) &
+  echo $(( $(date +%s) + minutes * 60 )) >"$deadline"
+  chown pair:pair "$deadline"
+  (
+    while [ -f "$pidfile" ] && [ "$(date +%s)" -lt "$(cat "$deadline")" ]; do sleep 5; done
+    "$0" close "the pairing window ended"
+  ) &
 
   fingerprint="$(ssh-keygen -lf "$hostkey.pub" | cut -d' ' -f2)"
   ip="$(supervisor /network/info | jq -r '[.data.interfaces[] | select(.primary) | .ipv4.address[]?][0] // empty' | cut -d/ -f1)" || ip=""
@@ -101,7 +109,7 @@ open_pairing() {
   log " Pairing is open for $minutes minutes."
   log " On one Proxmox node, as root, run:"
   log ""
-  log "   bash <(curl -fsSL https://raw.githubusercontent.com/samohtnt/ha-qnetd-addon/$ref/qdevice-setup.sh) ${ip:-HA_IP} --port $host_port --code $code --host-key $fingerprint"
+  log "   curl -fsSLo /tmp/qdevice-setup.sh https://raw.githubusercontent.com/samohtnt/ha-qnetd-addon/$ref/qdevice-setup.sh && bash /tmp/qdevice-setup.sh ${ip:-HA_IP} --port $host_port --code $code --host-key $fingerprint"
   log ""
   [ -n "$ip" ] || log " Replace HA_IP with the IP address of this Home Assistant device."
   log " The command checks the cluster, runs pvecm qdevice setup, and closes pairing."
@@ -115,6 +123,7 @@ close_pairing() {
   : >"$keys" 2>/dev/null || true
   passwd -l pair >/dev/null
   kill "$(cat "$pidfile")" 2>/dev/null || true
+  pkill -u pair 2>/dev/null || true
   rm -f "$pidfile"
   log "Pairing closed: $reason."
 }
@@ -141,6 +150,8 @@ enroll() {
     fi
     printf '%s\n' "$line" >>"$keys"
   fi
+  local extended=$(( $(date +%s) + grace_seconds ))
+  [ "$(cat "$deadline")" -ge "$extended" ] || echo "$extended" >"$deadline"
   echo "Enrolled $fingerprint"
 }
 

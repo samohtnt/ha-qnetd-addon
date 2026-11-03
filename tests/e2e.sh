@@ -156,12 +156,37 @@ for n in "$node1:$node1_ip:node1" "$node2:$node2_ip:node2"; do
   docker run -d --name "$name" --hostname "$host" --network "$net" --ip "$ip" --cap-add NET_ADMIN \
     "${node_platform[@]}" "$node_image" sleep infinity >/dev/null
   docker cp tests/fake-pvecm "$name:/usr/local/bin/pvecm"
+  # The root ssh config Proxmox writes: one global Ciphers line, no Host block.
   docker exec "$name" sh -c 'chmod 755 /usr/local/bin/pvecm && mkdir -p -m 700 /root/.ssh /etc/pve /run/sshd \
     && ssh-keygen -q -t rsa -b 3072 -N "" -f /root/.ssh/id_rsa \
-    && printf "Host *\n  StrictHostKeyChecking accept-new\n" >/root/.ssh/config && /usr/sbin/sshd'
+    && echo "Ciphers aes128-ctr,aes192-ctr,aes256-ctr,aes128-gcm@openssh.com,aes256-gcm@openssh.com,chacha20-poly1305@openssh.com" >/root/.ssh/config \
+    && /usr/sbin/sshd'
 done
 in_node1 cat /root/.ssh/id_rsa.pub | docker exec -i "$node2" sh -c 'cat >>/root/.ssh/authorized_keys'
 in_node2 cat /root/.ssh/id_rsa.pub | docker exec -i "$node1" sh -c 'cat >>/root/.ssh/authorized_keys'
+# What pmxcfs provides on a current Proxmox cluster: /etc/pve/.members, and each node's host key
+# in /etc/pve/nodes/<name>/ssh_known_hosts. Nothing goes into the global known_hosts.
+for n in "$node1:node1" "$node2:node2"; do
+  IFS=: read -r name host <<<"$n"
+  key="$(docker exec "$name" cat /etc/ssh/ssh_host_ed25519_key.pub | cut -d' ' -f1-2)"
+  for target in "$node1" "$node2"; do
+    docker exec "$target" sh -c "mkdir -p /etc/pve/nodes/$host && echo '$host $key' >/etc/pve/nodes/$host/ssh_known_hosts"
+  done
+done
+for n in "$node1:node1" "$node2:node2"; do
+  IFS=: read -r name host <<<"$n"
+  docker exec -i "$name" sh -c 'cat >/etc/pve/.members' <<EOF
+{
+"nodename": "$host",
+"version": 4,
+"cluster": { "name": "e2e", "version": 2, "nodes": 2, "quorate": 1 },
+"nodelist": {
+  "node1": { "id": 1, "online": 1, "ip": "$node1_ip"},
+  "node2": { "id": 2, "online": 1, "ip": "$node2_ip"}
+  }
+}
+EOF
+done
 for n in "$node1" "$node2"; do docker cp qdevice-setup.sh "$n:/usr/local/bin/qdevice-setup.sh"; done
 in_node1 pvecm fake-write-conf "$dead_qnetd"
 for n in "$node1" "$node2"; do docker exec -d "$n" sh -c 'corosync -f >/tmp/corosync.log 2>&1'; done
@@ -208,6 +233,7 @@ if root_login true 2>/dev/null; then fail "a key got enrolled despite the wrong 
 pass "qdevice-setup.sh stops on a wrong host key before it sends the code or changes the cluster"
 
 step "5. qdevice-setup.sh from node1"
+config_before="$(in_node1 sha256sum /root/.ssh/config)"
 in_node1 qdevice-setup.sh "$addon_ip" --code "$code" --host-key "$key" --yes 2>&1 | sed 's/^/  | /' ||
   fail "qdevice-setup.sh failed"
 both_vote || fail "not both nodes count the QDevice vote"
@@ -222,7 +248,7 @@ zombies="$(in_addon sh -c 'grep -l "^State:.*Z" /proc/[0-9]*/status 2>/dev/null 
 port_refused "$pairing_port" || fail "pairing port still open"
 docker logs "$addon" 2>&1 | grep -q 'Pairing closed: set up from node1' || fail "no close message in the log"
 pass "pairing closed and logged it"
-if in_node1 grep -q qnetd-pairing /root/.ssh/config; then fail "ssh config block left behind"; fi
+[ "$(in_node1 sha256sum /root/.ssh/config)" = "$config_before" ] || fail "node1 ssh config changed: $(in_node1 cat /root/.ssh/config)"
 if in_node1 test -e /root/.ssh/qnetd-pairing.known_hosts; then fail "known_hosts file left behind"; fi
 pass "node1 ssh config is back to how it was"
 
@@ -230,6 +256,11 @@ step "6. Running it again changes nothing"
 out="$(in_node1 qdevice-setup.sh "$addon_ip" --code "$code" --host-key "$key" --yes 2>&1)" || fail "rerun: $out"
 [[ "$out" == *"Already done"* ]] || fail "rerun did not detect the finished setup: $out"
 pass "a second run reports Already done and exits 0"
+out="$(in_node1 qdevice-setup.sh "$dead_qnetd" --code "$code" --host-key "$key" --yes 2>&1)" &&
+  fail "setup replaced a working QDevice: $out"
+[[ "$out" == *"--replace-working"* ]] || fail "working QDevice: $out"
+[ "$(in_node1 corosync-cmapctl -g quorum.device.net.host | sed 's/.*= //')" = "$addon_ip" ] || fail "device host changed"
+pass "--yes alone does not replace a working QDevice at another address"
 
 step "7. Restart keeps the CA and the vote, and pairing stays closed"
 ca_before="$(ca_fingerprint)"

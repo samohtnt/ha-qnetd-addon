@@ -31,7 +31,7 @@ You need a Proxmox VE cluster with an even number of nodes, all online, and a fi
 
 ## Release
 
-The pairing command downloads `qdevice-setup.sh` from the tag `v<version>`, where the version comes from `qnetd/config.yaml`. After you bump the version, push a matching tag, for example `git tag v1.1.0 && git push origin v1.1.0`. Without the tag, the command in the log fails with a 404.
+The pairing command downloads `qdevice-setup.sh` from the tag `v<version>`, where the version comes from `qnetd/config.yaml`. When CI passes on `main`, its `tag` job creates that tag if it does not exist yet. Bump the version in `qnetd/config.yaml` for every change to `qdevice-setup.sh`, so the tag a user downloads always matches the add-on they run.
 
 ## Run the tests
 

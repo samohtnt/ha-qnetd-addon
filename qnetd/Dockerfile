@@ -9,7 +9,7 @@ ENV BUILD_VERSION=${BUILD_VERSION}
 # hadolint ignore=DL3008
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      corosync-qnetd openssh-server jq curl \
+      corosync-qnetd openssh-server jq curl procps \
  && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \
  && rm -rf /etc/corosync/qnetd \
  && ln -s /data/qnetd /etc/corosync/qnetd \
