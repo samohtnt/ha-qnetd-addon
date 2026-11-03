@@ -77,7 +77,8 @@ published() {
 # published ports the way the LAN does. Engines with a host firewall drop bridge-to-host traffic,
 # so the client container cannot use host.docker.internal for this.
 from_host() {
-  in_client cat /root/.ssh/id_rsa | docker run --rm -i --network host "$client_image" bash -c     'install -d -m 700 /root/.ssh && cat >/root/.ssh/id_rsa && chmod 600 /root/.ssh/id_rsa && exec "$@"' _ "$@"
+  in_client cat /root/.ssh/id_rsa | docker run --rm -i --network host "$client_image" bash -c \
+    'install -d -m 700 /root/.ssh && cat >/root/.ssh/id_rsa && chmod 600 /root/.ssh/id_rsa && exec "$@"' _ "$@"
 }
 
 ca_fingerprint() {
