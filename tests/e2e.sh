@@ -58,7 +58,9 @@ start_addon() {
   docker run -d --name "$addon" --network "$net" --ip "$addon_ip" \
     -p 5403 -p 22 -v "$vol:/data" "$image" >/dev/null
   wait_for "qnetd to answer corosync-qnetd-tool -s" in_addon corosync-qnetd-tool -s
+  wait_for "the health check to report healthy" addon_healthy
 }
+addon_healthy() { [ "$(docker inspect -f '{{.State.Health.Status}}' "$addon")" = healthy ]; }
 
 stop_addon() {
   docker stop "$addon" >/dev/null

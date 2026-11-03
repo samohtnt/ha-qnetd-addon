@@ -12,4 +12,5 @@ RUN apt-get update \
  && ln -s /data/qnetd /etc/corosync/qnetd
 
 COPY run.sh /run.sh
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=2s CMD ["corosync-qnetd-tool", "-s"]
 CMD ["/bin/bash", "/run.sh"]
