@@ -10,7 +10,7 @@ The add-on keeps its certificate database in `/data/qnetd`. Home Assistant keeps
 2. Open the **Log** tab. It shows a command that starts with `curl -fsSLo /tmp/qdevice-setup.sh`.
 3. Copy that command. On one Proxmox node, open a root shell and paste it.
 
-That is all. The command checks the cluster, sets up the QDevice on every node, checks the vote, and closes pairing on the add-on. It asks before it removes or installs anything. If it stops with an error, fix the problem it names and paste the same command again.
+That is all. The command checks the cluster, sets up the QDevice on every node, checks the vote, and closes pairing on the add-on. Before it changes anything, it lists every planned change and asks once. If it stops with an error, fix the problem it names and paste the same command again.
 
 ### What you need
 
@@ -28,9 +28,12 @@ The command downloads `qdevice-setup.sh` from this repository, at the tag that m
 4. Runs `pvecm qdevice setup`. `pvecm` uses SSH on port 22 only, so for the duration of the script a block at the top of `/root/.ssh/config` points it at port 22022 and the pinned host key. The script removes the block when it exits.
 5. Waits until every node counts the QDevice vote, then closes pairing.
 
-The script asks about every change before it pairs, and makes the changes only after pairing works. A wrong address or an old code leaves the cluster as it was.
+The script lists every planned change and asks once before it pairs. It makes the changes only after pairing works, so a wrong address or an old code leaves the cluster as it was.
 
-To read the script before you run it, run only the `curl` part of the command and open `/tmp/qdevice-setup.sh`, or run `bash /tmp/qdevice-setup.sh --help`.
+To check before you run it:
+
+- Run only the `curl` part of the command and read `/tmp/qdevice-setup.sh`. The comment block at its top lists every file it changes, every connection it makes, and how to undo it.
+- Add `--dry-run` to the command. The script then runs every check and prints the planned changes, and changes nothing.
 
 ## Pairing
 
