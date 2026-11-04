@@ -34,3 +34,25 @@ jobs:
         env:
           ADDON_PLATFORM: ${{ matrix.platform }}
           E2E_WAIT: ${{ matrix.platform == 'linux/arm64' && 180 || 30 }}
+
+  # The pairing command in the add-on log downloads qdevice-setup.sh from the tag
+  # v<version>, so every version that reaches main gets its tag.
+  tag:
+    needs: [lint, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          version="$(sed -n 's/^version: "\(.*\)"$/\1/p' qnetd/config.yaml)"
+          [ -n "$version" ] || { echo "no version in qnetd/config.yaml"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "v$version already exists"
+          else
+            git tag "v$version"
+            git push origin "v$version"
+          fi

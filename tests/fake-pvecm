@@ -1,0 +1,141 @@
+#!/bin/bash
+# Stands in for pvecm on the e2e test nodes. qdevice setup and qdevice remove run the
+# same ssh, scp, and certutil commands as src/PVE/CLI/pvecm.pm in pve-cluster, in the
+# same order. Two things differ: /etc/pve is a plain directory, so this copies shared
+# files to the peer, and corosync.conf comes from a template instead of pmxcfs.
+#   pvecm qdevice setup ADDR [--force]
+#   pvecm qdevice remove
+#   pvecm fake-write-conf [QDEVICE_HOST]   write corosync.conf on both nodes
+set -euo pipefail
+
+cluster=e2e
+node_ips=(10.254.254.20 10.254.254.21)
+node_names=(node1 node2)
+self="$(hostname -i | awk '{print $1}')"
+db_dir_node=/etc/corosync/qdevice/net/nssdb
+db_dir_qnetd=/etc/corosync/qnetd/nssdb
+
+die() {
+  echo "$*" >&2
+  exit 255
+}
+# The ssh options of PVE::SSHInfo, which pvecm uses between nodes.
+node_opts() {
+  local i name
+  for i in "${!node_ips[@]}"; do [ "${node_ips[i]}" = "$1" ] && name="${node_names[i]}"; done
+  printf '%s\n' -o BatchMode=yes -o "HostKeyAlias=$name" \
+    -o "UserKnownHostsFile=/etc/pve/nodes/$name/ssh_known_hosts" -o GlobalKnownHostsFile=none
+}
+on() {
+  local ip="$1" opts
+  shift
+  if [ "$ip" = "$self" ]; then
+    "$@"
+  else
+    mapfile -t opts < <(node_opts "$ip")
+    ssh -e none "${opts[@]}" "root@$ip" -- "$(printf '%q ' "$@")"
+  fi
+}
+share() {
+  local ip opts
+  for ip in "${node_ips[@]}"; do
+    [ "$ip" != "$self" ] || continue
+    mapfile -t opts < <(node_opts "$ip")
+    scp -q "${opts[@]}" "/etc/pve/$1" "root@$ip:/etc/pve/$1"
+  done
+}
+unshare() {
+  local ip
+  for ip in "${node_ips[@]}"; do on "$ip" rm -f "/etc/pve/$1"; done
+}
+
+conf() {
+  cat <<EOF
+totem {
+  version: 2
+  cluster_name: $cluster
+  transport: knet
+  crypto_cipher: none
+  crypto_hash: none
+}
+nodelist {
+  node {
+    name: node1
+    nodeid: 1
+    ring0_addr: ${node_ips[0]}
+  }
+  node {
+    name: node2
+    nodeid: 2
+    ring0_addr: ${node_ips[1]}
+  }
+}
+quorum {
+  provider: corosync_votequorum
+EOF
+  if [ -n "$1" ]; then
+    printf '  device {\n    model: net\n    votes: 1\n    net {\n      tls: on\n      host: %s\n      algorithm: ffsplit\n    }\n  }\n' "$1"
+  fi
+  printf '}\nlogging {\n  to_stderr: yes\n  to_syslog: no\n}\n'
+}
+write_conf() {
+  local ip
+  for ip in "${node_ips[@]}"; do conf "$1" | on "$ip" sh -c 'cat >/etc/corosync/corosync.conf'; done
+}
+device() { corosync-cmapctl -g quorum.device.net.host 2>/dev/null | sed -n 's/^[^=]*= //p' || true; }
+
+setup() {
+  local addr="$1" force="${2:-}" ip
+  [ -z "$(device)" ] || [ -n "$force" ] || die "QDevice already configured!"
+  ssh-copy-id -i /root/.ssh/id_rsa "root@$addr"
+  if [ -d "$db_dir_node" ]; then
+    [ -n "$force" ] || die "QDevice certificate store already initialised, set force to delete!"
+    rm -rf "$db_dir_node"
+  fi
+  local ssh_cmd=(ssh -o BatchMode=yes -lroot) scp_cmd=(scp -o BatchMode=yes)
+  echo "INFO: initializing qnetd server"
+  "${ssh_cmd[@]}" "$addr" corosync-qnetd-certutil -i || true
+  echo "INFO: copying CA cert and initializing on all nodes"
+  "${scp_cmd[@]}" "root@[$addr]:$db_dir_qnetd/qnetd-cacert.crt" /etc/pve/qnetd-cacert.crt
+  share qnetd-cacert.crt
+  for ip in "${node_ips[@]}"; do on "$ip" corosync-qdevice-net-certutil -i -c /etc/pve/qnetd-cacert.crt || true; done
+  unshare qnetd-cacert.crt
+  echo "INFO: generating cert request"
+  corosync-qdevice-net-certutil -r -n "$cluster"
+  echo "INFO: copying exported cert request to qnetd server"
+  "${scp_cmd[@]}" "$db_dir_node/qdevice-net-node.crq" "root@[$addr]:/tmp"
+  echo "INFO: sign and export cluster cert"
+  "${ssh_cmd[@]}" "$addr" corosync-qnetd-certutil -s -c /tmp/qdevice-net-node.crq -n "$cluster"
+  echo "INFO: copy exported CRT"
+  "${scp_cmd[@]}" "root@[$addr]:$db_dir_qnetd/cluster-$cluster.crt" "$db_dir_node"
+  echo "INFO: import certificate"
+  corosync-qdevice-net-certutil -M -c "$db_dir_node/cluster-$cluster.crt"
+  echo "INFO: copy and import pk12 cert to all nodes"
+  "${scp_cmd[@]}" "$db_dir_node/qdevice-net-node.p12" /etc/pve/
+  share qdevice-net-node.p12
+  for ip in "${node_ips[@]}"; do on "$ip" corosync-qdevice-net-certutil -m -c /etc/pve/qdevice-net-node.p12; done
+  unshare qdevice-net-node.p12
+  echo "INFO: add QDevice to cluster configuration"
+  write_conf "$addr"
+  corosync-cfgtool -R
+  for ip in "${node_ips[@]}"; do
+    on "$ip" sh -c 'setsid corosync-qdevice -f </dev/null >/tmp/corosync-qdevice.log 2>&1 &'
+  done
+}
+
+remove() {
+  local ip
+  [ -n "$(device)" ] || die "No QDevice configured!"
+  write_conf ""
+  for ip in "${node_ips[@]}"; do on "$ip" rm -rf /etc/corosync/qdevice; done
+  for ip in "${node_ips[@]}"; do on "$ip" sh -c 'pkill -f ^corosync-qdevice || true'; done
+  corosync-cfgtool -R
+  echo "Removed Qdevice."
+}
+
+case "${1:-} ${2:-}" in
+  "qdevice setup") setup "$3" "${4:-}" ;;
+  "qdevice remove") remove ;;
+  fake-write-conf*) write_conf "${2:-}" ;;
+  *) die "fake pvecm: unsupported: $*" ;;
+esac
