@@ -328,9 +328,12 @@ show_plan_and_confirm() {
     note "--yes given: going ahead."
     return
   fi
-  [ -r /dev/tty ] || die "cannot ask for confirmation without a terminal. Run again with --yes to allow these changes. Nothing was changed."
-  local answer
-  read -r -p $'\n      Make these changes? [y/N] ' answer </dev/tty
+  # Opening /dev/tty is the real test. "[ -r /dev/tty ]" is true for root even
+  # with no controlling terminal (cron, ssh without -t), and the open then fails.
+  { : </dev/tty; } 2>/dev/null ||
+    die "cannot ask for confirmation without a terminal. Run again with --yes to allow these changes. Nothing was changed."
+  local answer=""
+  read -r -p $'\n      Make these changes? [y/N] ' answer </dev/tty || true
   [[ "$answer" =~ ^[Yy] ]] || die "stopped. Nothing was changed."
 }
 
