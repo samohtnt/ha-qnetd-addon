@@ -4,102 +4,89 @@ This add-on runs `corosync-qnetd`, the server side of a Proxmox VE QDevice. A tw
 
 The add-on keeps its certificate database in `/data/qnetd`. Home Assistant keeps `/data` across add-on and OS updates and includes it in backups. The backup therefore holds the QNetd CA private key, so protect it like any other secret.
 
+## Set up the QDevice
+
+1. Install and start the add-on.
+2. Open the **Log** tab. It shows a command that starts with `curl -fsSLo /tmp/qdevice-setup.sh`.
+3. Copy that command. On one Proxmox node, open a root shell and paste it.
+
+That is all. The command checks the cluster, sets up the QDevice on every node, checks the vote, and closes pairing on the add-on. Before it changes anything, it lists every planned change and asks once. If it stops with an error, fix the problem it names and paste the same command again.
+
+### What you need
+
+- A Proxmox VE cluster with an even number of nodes, usually two, all online.
+- A fixed IP address for Home Assistant, such as a DHCP reservation. The cluster stores the address, so the vote breaks when it changes.
+- TCP 5403 open from every node to Home Assistant, and TCP 22022 from the node where you paste the command.
+
+### What the command does
+
+The command downloads `qdevice-setup.sh` from this repository, at the tag that matches the add-on version, and runs it. The script does these steps:
+
+1. Checks that the cluster is quorate, that every node is online and reaches Home Assistant on port 5403, and that `corosync-qdevice` is installed. It offers to install the package where it is missing.
+2. Offers to remove a QDevice that does not give every node a vote, such as an old tie-breaker that is gone, and leftover QDevice certificates. It never replaces a working QDevice at another address unless you add `--replace-working`.
+3. Checks that the add-on's SSH host key matches the one in the log, then sends the one-time pairing code and the node's root public key. Nothing is sent if the host key does not match.
+4. Runs `pvecm qdevice setup`. `pvecm` uses SSH on port 22 only, so for the duration of the script a block at the top of `/root/.ssh/config` points it at port 22022 and the pinned host key. The script removes the block when it exits.
+5. Waits until every node counts the QDevice vote, then closes pairing.
+
+The script lists every planned change and asks once before it pairs. It makes the changes only after pairing works, so a wrong address or an old code leaves the cluster as it was.
+
+To check before you run it:
+
+- Run only the `curl` part of the command and read `/tmp/qdevice-setup.sh`. The comment block at its top lists every file it changes, every connection it makes, and how to undo it.
+- Add `--dry-run` to the command. The script then runs every check and prints the planned changes, and changes nothing.
+
+## Pairing
+
+Pairing is how the Proxmox node gets SSH access to the add-on for `pvecm qdevice setup`, without you copying keys around.
+
+- Pairing opens by itself when the add-on starts and has not set up a cluster yet. It stays open for 60 minutes, or until the setup closes it. Once a node has enrolled, pairing stays open for at least 15 more minutes, so the setup never loses it halfway.
+- Each time pairing opens, the add-on makes a new code. The code is valid only while pairing is open.
+- While pairing is open, an SSH server listens on port 22022. It accepts the user `pair` with the code, which can only enrol a public key, and `root` with an enrolled key. Closing pairing stops the server and forgets the enrolled keys.
+- Once a cluster is set up, pairing stays closed across restarts. To add a second cluster or redo the setup, turn on `open_pairing`, restart the add-on, and turn it off again afterwards.
+
 ## Options
 
 | Option | Default | Meaning |
 |---|---|---|
-| `setup_ssh` | `false` | Starts an SSH server that accepts only the key in `authorized_key`, for root. `pvecm qdevice setup` needs it. Turn it off after setup. |
-| `authorized_key` | none | One public key line. Use the full contents of `/root/.ssh/id_rsa.pub` on the Proxmox node where you run `pvecm qdevice setup`. |
+| `open_pairing` | `false` | Opens pairing at start even when a cluster is already set up. |
 
 | Port | Default | Use |
 |---|---|---|
 | `5403/tcp` | `5403` | QNetd. Every Proxmox node connects here. TLS with client certificates. |
-| `22/tcp` | disabled | SSH, during setup only. |
+| `22022/tcp` | `22022` | Pairing SSH. Nothing listens here unless pairing is open. |
 
-## Before you start
+If you change the pairing port in the **Network** section, the log shows the new port in the command. Do not change the QNetd port. Proxmox always connects to 5403.
 
-You need these things:
+## Check the vote
 
-- A Proxmox VE cluster with an even number of nodes, usually two. For an odd number of nodes, Proxmox advises against a QDevice, and `pvecm qdevice setup` refuses without `--force`.
-- Root shell access to one node. This guide calls it the *setup node*.
-- The IP address of your Home Assistant device, written as `HA_IP` below. Give it a fixed address, such as a DHCP reservation. The cluster stores the address in `corosync.conf`, so the vote breaks when the address changes.
-- A network path from every node to `HA_IP` on TCP 5403, and from the setup node to `HA_IP` on TCP 22.
+On any node, run `pvecm status`. For a two-node cluster it shows `Flags: Quorate Qdevice`, `Expected votes: 3`, `Total votes: 3`, and `A,V,NMW` for each node.
 
-One add-on can serve more than one cluster. Run the setup once from each cluster.
-
-## Set up the QDevice
-
-### Check the starting state
-
-1. On the setup node, run `pvecm status`. The cluster must be quorate with all nodes online.
-2. On every node, check that the `corosync-qdevice` package is installed. If it is not, run `apt install corosync-qdevice`.
-3. On the setup node, check that `/root/.ssh/id_rsa.pub` exists. Proxmox creates this key when it creates or joins a cluster.
-4. In Home Assistant, take a backup.
-
-### Remove the old QDevice
-
-Skip this section if the cluster has no QDevice. `pvecm qdevice setup` refuses to run while one is configured.
-
-1. On the setup node, run `pvecm qdevice remove`.
-2. Run `pvecm status`. Check that `Expected votes` and `Total votes` equal the number of nodes, and that the cluster is `Quorate`.
-
-### Install the add-on in setup mode
-
-1. In Home Assistant, go to **Settings** > **Add-ons** > **Add-on Store**.
-2. Open the menu (three dots) and select **Repositories**. Add the URL of this repository.
-3. Install **Proxmox QNetd**.
-4. If another add-on uses port 22, such as **Terminal & SSH**, stop it for the duration of the setup.
-5. On the setup node, print the root public key with `cat /root/.ssh/id_rsa.pub`.
-6. On the add-on **Configuration** tab, set `setup_ssh` to on and paste the key into `authorized_key`.
-7. In the **Network** section of the same tab, set `22/tcp` to `22`. Save.
-8. Start the add-on and open the **Log** tab. The log shows `Setup SSH is ON` and an `SSH host key: 256 SHA256:...` line. Keep the log open for the next step.
-9. On the setup node, run `ssh root@HA_IP command -v corosync-qnetd-certutil`. Check that the fingerprint SSH asks you to accept matches the `SSH host key` line in the log, then type `yes`. The command prints `/usr/bin/corosync-qnetd-certutil`.
-
-`pvecm qdevice setup` connects with `/root/.ssh/id_rsa` and fixed SSH options. It cannot use another key or another port. That is why the add-on asks for that key and port 22.
-
-### Join the QDevice
-
-1. On the setup node, run `pvecm qdevice setup HA_IP`.
-
-   The command signs a certificate for the cluster on the add-on, installs it on every node, adds a `quorum.device` section to `corosync.conf`, and starts `corosync-qdevice` on every node. For a cluster with an even number of nodes it uses the `ffsplit` algorithm.
-
-   The first command prints `Certificate database (/etc/corosync/qnetd/nssdb) already exists`. That is expected, because the add-on creates its database on first start. `pvecm` ignores the error.
-2. On every node, run `pvecm status`. For a two-node cluster, check for `Flags: Quorate Qdevice`, `Expected votes: 3`, `Total votes: 3`, and a `Qdevice` membership line with `A,V,NMW`.
-3. In the Proxmox web interface, or with `pvesh get /cluster/config/qdevice`, check that the state is connected and the host is `HA_IP`.
-
-### Close setup access
-
-1. On the add-on **Configuration** tab, set `setup_ssh` to off and clear the `22/tcp` port. Save and restart the add-on.
-2. Start **Terminal & SSH** again if you stopped it.
-3. On every node, run `pvecm status` again. The QDevice vote returns within about 30 seconds of the add-on restart.
-
-## Test the vote without a reboot
-
-Do not test by rebooting a node outside a maintenance window.
-
-1. Stop the add-on. On the setup node, `pvecm status` now shows one vote fewer and the cluster stays quorate.
-2. Start the add-on. The vote returns within about 30 seconds.
+To test the vote without a reboot, stop the add-on. `pvecm status` then shows one vote fewer and the cluster stays quorate. Start the add-on again and the vote returns within about 30 seconds. Do not test by rebooting a node outside a maintenance window.
 
 ## Monitor the QDevice
 
-- Probe `HA_IP:5403` over TCP, for example with a Prometheus blackbox `tcp_connect` probe. Alert when it fails for 10 minutes.
+- Probe TCP 5403 on Home Assistant, for example with a Prometheus blackbox `tcp_connect` probe. Alert when it fails for 10 minutes.
 - Alert when the QDevice state in the Proxmox API is not connected for 10 minutes.
 
-The add-on also has a health check that asks `corosync-qnetd` for its status every 30 seconds. Turn on **Watchdog** on the add-on page, and Home Assistant restarts the add-on when the check fails.
+The add-on has a health check that asks `corosync-qnetd` for its status every 30 seconds. Turn on **Watchdog** on the add-on page, and Home Assistant restarts the add-on when the check fails.
 
 ## Troubleshooting
 
-| Symptom | Cause and fix |
+| Message or symptom | Cause and fix |
 |---|---|
-| `pvecm qdevice setup` fails with `Permission denied (publickey)` | The key in `authorized_key` is not the setup node's `/root/.ssh/id_rsa.pub`, or `setup_ssh` is off. Fix the option and restart the add-on. |
-| `pvecm qdevice setup` fails with `Connection refused` on port 22 | `22/tcp` is not mapped in the **Network** section, or another add-on holds port 22. |
-| The add-on log says `setup_ssh is on but authorized_key is empty` | Paste the key, or turn `setup_ssh` off. |
-| The QDevice state stays `Connect failed` | A node cannot reach `HA_IP:5403`. Check the firewalls between the nodes and Home Assistant, and check that `HA_IP` has not changed. |
+| `nothing answers on ...:22022` | Pairing is closed or the add-on is stopped. If no cluster is set up yet, restart the add-on. Otherwise turn on `open_pairing` and restart it. Then copy the new command. After several failed attempts, wait a minute: the add-on slows down repeated failed logins. |
+| `the SSH host key ... is ..., but the add-on log says ...` | The command reached another device. Check the IP address in the command. |
+| `the add-on refused the pairing code` | The code is from an earlier start. Copy the command again from the log. |
+| `offline: ...` | Start every node first. `pvecm qdevice setup` needs all of them. |
+| `cannot reach ... over SSH the way pvecm does` | Root SSH between the nodes is broken. Run `pvecm updatecerts` on each node. |
+| `the cluster already has a working QDevice at ...` | Add `--replace-working` to the command if you mean to move the vote to this add-on. |
+| `... cannot reach ...:5403` | A firewall blocks the node, or the add-on is stopped. |
+| The QDevice state stays `Connect failed` later | A node cannot reach the add-on on 5403, or the Home Assistant IP address changed. |
 | The nodes log TLS or certificate errors after a reinstall | The add-on lost `/data` and made a new CA. See [Recover after data loss](#recover-after-data-loss). |
 
 ## Recover after data loss
 
-If `/data/qnetd` is lost, for example by reinstalling the add-on without a backup, the add-on creates a new CA. The nodes then fail the TLS handshake. Restore the add-on from a Home Assistant backup, or repeat the setup from [Remove the old QDevice](#remove-the-old-qdevice).
+If `/data/qnetd` is lost, for example by reinstalling the add-on without a backup, the add-on creates a new CA and opens pairing. The nodes fail the TLS handshake with the new CA. Restore the add-on from a Home Assistant backup, or paste the new command from the log. The script sees the broken QDevice and offers to replace it.
 
 ## Roll back
 

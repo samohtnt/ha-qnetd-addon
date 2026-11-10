@@ -12,37 +12,23 @@ if [ ! -f "$db/cert9.db" ]; then
 fi
 if ! certutil -L -d "$db" -n "QNetd Cert" >/dev/null; then
   echo "The certificate database in /data/qnetd has no server certificate." >&2
-  echo "Delete /data/qnetd and run pvecm qdevice setup again." >&2
+  echo "Delete /data/qnetd and set up the QDevice again." >&2
   exit 1
 fi
 chown -R root:coroqnetd /data/qnetd
 chmod -R g+rX,g-w,o-rwx /data/qnetd
 install -d -o coroqnetd -g coroqnetd -m 0770 /run/corosync-qnetd
 
-if [ "$(jq -r '.setup_ssh // false' "$options")" = true ]; then
-  key="$(jq -r '.authorized_key // empty' "$options")"
-  if [ -z "$key" ]; then
-    echo "setup_ssh is on but authorized_key is empty" >&2
-    exit 1
-  fi
-  install -d -m 0700 /root/.ssh /data/ssh
-  install -d -m 0755 /run/sshd
-  printf '%s\n' "$key" >/root/.ssh/authorized_keys
-  chmod 0600 /root/.ssh/authorized_keys
-  # A host key under /data keeps the fingerprint the PVE nodes saw stable across restarts.
-  if [ ! -f /data/ssh/ssh_host_ed25519_key ]; then
-    ssh-keygen -q -t ed25519 -N '' -f /data/ssh/ssh_host_ed25519_key
-  fi
-  sshd_opts=(
-    -o HostKey=/data/ssh/ssh_host_ed25519_key
-    -o PermitRootLogin=prohibit-password
-    -o PasswordAuthentication=no
-    -o KbdInteractiveAuthentication=no
-  )
-  /usr/sbin/sshd -t "${sshd_opts[@]}"
-  /usr/sbin/sshd -D -e "${sshd_opts[@]}" &
-  echo "Setup SSH is ON. Turn setup_ssh off once pvecm qdevice setup has finished."
-  echo "SSH host key: $(ssh-keygen -lf /data/ssh/ssh_host_ed25519_key.pub)"
+# corosync-qnetd-certutil -s leaves one cluster-<name>.crt per cluster it has signed for.
+clusters="$(find "$db" -maxdepth 1 -name 'cluster-*.crt' | wc -l)"
+# A pairing failure must not stop qnetd, which may already serve a cluster.
+if [ "$clusters" -eq 0 ]; then
+  /usr/local/bin/qnetd-pairing open 60 || echo "ERROR: pairing failed to open. See the lines above." >&2
+elif [ "$(jq -r '.open_pairing // false' "$options")" = true ]; then
+  echo "open_pairing is on. Turn it off once the new cluster is set up."
+  /usr/local/bin/qnetd-pairing open 60 || echo "ERROR: pairing failed to open. See the lines above." >&2
+else
+  echo "Serving $clusters cluster(s). Pairing is closed. Turn on open_pairing to add another cluster."
 fi
 
 exec setpriv --reuid=coroqnetd --regid=coroqnetd --init-groups corosync-qnetd -f
