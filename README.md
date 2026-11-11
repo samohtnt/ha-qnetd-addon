@@ -8,10 +8,10 @@ The add-on builds on the device from `debian:trixie-slim`, for `aarch64` and `am
 
 ## Install
 
-1. In Home Assistant, go to **Settings** > **Add-ons** > **Add-on Store**.
+1. In Home Assistant, go to **Settings** > **Apps** and open the store. Newer Home Assistant versions call add-ons apps; older versions call it **Settings** > **Add-ons** > **Add-on Store**.
 2. Open the menu (three dots) and select **Repositories**. Add `https://github.com/samohtnt/ha-qnetd-addon`.
 3. Install **Proxmox QNetd** and start it.
-4. Open the add-on **Log** tab, copy the command it shows, and paste it into a root shell on one Proxmox node.
+4. Open the app's **Log** tab, copy the command it shows, and paste it into a root shell on one Proxmox node.
 
 The command checks the cluster, replaces an old QDevice if there is one, runs `pvecm qdevice setup`, and checks the vote on every node. [The add-on documentation](qnetd/DOCS.md) explains each step, the pairing that makes it work, and troubleshooting.
 
