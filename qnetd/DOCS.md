@@ -77,6 +77,8 @@ The add-on has a health check that asks `corosync-qnetd` for its status every 30
 | `nothing answers on ...:22022` | Pairing is closed or the add-on is stopped. If no cluster is set up yet, restart the add-on. Otherwise turn on `open_pairing` and restart it. Then copy the new command. After several failed attempts, wait a minute: the add-on slows down repeated failed logins. |
 | `the SSH host key ... is ..., but the add-on log says ...` | The command reached another device. Check the IP address in the command. |
 | `the add-on refused the pairing code` | The code is from an earlier start. Copy the command again from the log. |
+| `pvecm added the QDevice ... then failed to start corosync-qdevice` | Corosync had not loaded the new configuration when pvecm started the daemon. The script reloads it and starts the daemon again, so no action is needed if the next lines say `ok`. Do not run `pvecm qdevice remove`. |
+| `... is configured, but not every node counts its vote` or `still does not start on: ...` | Check `journalctl -b -u corosync-qdevice` on the named nodes, then run the same command again. If pairing has closed, turn on `open_pairing`, restart the add-on, and use the new command. |
 | `offline: ...` | Start every node first. `pvecm qdevice setup` needs all of them. |
 | `cannot reach ... over SSH the way pvecm does` | Root SSH between the nodes is broken. Run `pvecm updatecerts` on each node. |
 | `the cluster already has a working QDevice at ...` | Add `--replace-working` to the command if you mean to move the vote to this add-on. |
