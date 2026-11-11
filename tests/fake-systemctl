@@ -1,0 +1,35 @@
+#!/bin/bash
+# Stands in for systemctl on the e2e test nodes, which run without systemd. It handles only
+# the corosync-qdevice unit, and only the verbs that qdevice-setup.sh and fake-pvecm use.
+#   systemctl is-active --quiet corosync-qdevice
+#   systemctl reset-failed corosync-qdevice
+#   systemctl enable [--quiet] corosync-qdevice
+#   systemctl start corosync-qdevice
+set -euo pipefail
+
+verb="${1:-}"
+unit="${*: -1}"
+[ "$unit" = corosync-qdevice ] || {
+  echo "fake systemctl: unsupported: $*" >&2
+  exit 1
+}
+running() { pgrep -f '^corosync-qdevice -f' >/dev/null; }
+
+case "$verb" in
+  is-active) running ;;
+  reset-failed | enable) ;;
+  start)
+    running && exit 0
+    setsid corosync-qdevice -f </dev/null >>/tmp/corosync-qdevice.log 2>&1 &
+    # The real unit is Type=notify: start returns once the daemon is up, or fails if it exits.
+    sleep 2
+    running || {
+      echo "Job for corosync-qdevice.service failed because the control process exited with error code." >&2
+      exit 1
+    }
+    ;;
+  *)
+    echo "fake systemctl: unsupported: $*" >&2
+    exit 1
+    ;;
+esac

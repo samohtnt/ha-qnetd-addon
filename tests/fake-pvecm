@@ -6,6 +6,9 @@
 #   pvecm qdevice setup ADDR [--force]
 #   pvecm qdevice remove
 #   pvecm fake-write-conf [QDEVICE_HOST]   write corosync.conf on both nodes
+# FAKE_PVECM_START_FAILS=1 makes qdevice setup fail the way pvecm did on Proxmox VE 9: it
+# writes the quorum.device section, then the daemon cannot start because corosync has not
+# reloaded corosync.conf yet, and pvecm stops before its own reload.
 set -euo pipefail
 
 cluster=e2e
@@ -117,10 +120,12 @@ setup() {
   unshare qdevice-net-node.p12
   echo "INFO: add QDevice to cluster configuration"
   write_conf "$addr"
+  if [ "${FAKE_PVECM_START_FAILS:-}" = 1 ]; then
+    echo "Job for corosync-qdevice.service failed because the control process exited with error code." >&2
+    die "command 'systemctl start corosync-qdevice' failed: exit code 1"
+  fi
   corosync-cfgtool -R
-  for ip in "${node_ips[@]}"; do
-    on "$ip" sh -c 'setsid corosync-qdevice -f </dev/null >/tmp/corosync-qdevice.log 2>&1 &'
-  done
+  for ip in "${node_ips[@]}"; do on "$ip" systemctl start corosync-qdevice; done
 }
 
 remove() {
