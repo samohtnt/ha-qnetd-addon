@@ -27,16 +27,25 @@ cover. Read it first. This file lists only the rules that are easy to break.
 
 ## Checks
 
-- Lint runs in two places, with the same tools and the same file list:
-  - Step "0. Lint" of `tests/e2e.sh`, which needs Docker. It reads the Dockerfile and each script on
-    stdin:
+- Lint runs in two places, with the same tool versions and the same file list:
+  - Step "0. Lint" of `tests/e2e.sh`, which needs Docker. It runs the pinned images
+    `hadolint/hadolint:v2.15.1` and `koalaman/shellcheck:v0.11.0`, set at the top of that step, and
+    reads the Dockerfile and each script on stdin:
 
     ```sh
-    docker run --rm -i hadolint/hadolint <qnetd/Dockerfile
+    hadolint_image=hadolint/hadolint:v2.15.1
+    shellcheck_image=koalaman/shellcheck:v0.11.0
+    docker run --rm -i "$hadolint_image" <qnetd/Dockerfile
     for f in qnetd/run.sh qnetd/qnetd-pairing qdevice-setup.sh tests/fake-pvecm tests/e2e.sh; do
-      docker run --rm -i koalaman/shellcheck:stable -s bash - <"$f"
+      docker run --rm -i "$shellcheck_image" -s bash - <"$f"
     done
     ```
+
+    Keep these fixed tags; never switch to `latest`, `stable` or an untagged image. They keep a new
+    upstream release from changing CI, and they match the binaries that
+    `.forge/image/Containerfile` copies from the same images, pinned by digest. To move to a new
+    version, change the tag in `tests/e2e.sh`, the digest and comment in
+    `.forge/image/Containerfile`, and the versions in the README and here, together.
 
   - `.forge/check`, which runs in forge in the image from `.forge/image/Containerfile`, where
     `hadolint` and `shellcheck` are installed as binaries. It runs `hadolint - <qnetd/Dockerfile`,
