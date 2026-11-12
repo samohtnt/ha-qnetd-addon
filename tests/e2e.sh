@@ -2,7 +2,8 @@
 # End-to-end proof of the qnetd add-on and qdevice-setup.sh, using Docker.
 # Set ADDON_PLATFORM (for example linux/arm64) to build and run only the add-on for another platform.
 # Two node containers form a corosync cluster that plays the Proxmox cluster. tests/fake-pvecm
-# stands in for pvecm and runs the same commands as pvecm qdevice setup and remove.
+# stands in for pvecm and runs the same commands as pvecm qdevice setup and remove, and
+# tests/fake-systemctl stands in for systemctl, because the nodes run without systemd.
 set -euo pipefail
 # Git Bash rewrites arguments that look like POSIX paths (/data, /etc/...) into Windows paths.
 export MSYS_NO_PATHCONV=1
@@ -124,6 +125,7 @@ root_login() {
 votes_on() { docker exec "$1" corosync-quorumtool -s 2>/dev/null; }
 qdevice_vote() { votes_on "$1" | grep -q '^Flags:.*Qdevice' && votes_on "$1" | grep -q 'A,V,'; }
 both_vote() { qdevice_vote "$node1" && qdevice_vote "$node2"; }
+no_vote() { ! qdevice_vote "$node1" && ! qdevice_vote "$node2"; }
 quorate() { votes_on "$node1" | grep -qE '^Quorate: +Yes'; }
 cluster_listed() { in_addon corosync-qnetd-tool -l | grep -q 'Cluster "e2e"'; }
 
@@ -134,7 +136,7 @@ hadolint_image=hadolint/hadolint:v2.15.1
 shellcheck_image=koalaman/shellcheck:v0.11.0
 docker run --rm -i "$hadolint_image" <qnetd/Dockerfile || fail "hadolint qnetd/Dockerfile"
 pass "hadolint qnetd/Dockerfile"
-for f in qnetd/run.sh qnetd/qnetd-pairing qdevice-setup.sh tests/fake-pvecm tests/e2e.sh; do
+for f in qnetd/run.sh qnetd/qnetd-pairing qdevice-setup.sh tests/fake-pvecm tests/fake-systemctl tests/e2e.sh; do
   docker run --rm -i "$shellcheck_image" -s bash - <"$f" || fail "shellcheck $f"
   pass "shellcheck $f"
 done
@@ -160,8 +162,9 @@ for n in "$node1:$node1_ip:node1" "$node2:$node2_ip:node2"; do
   docker run -d --name "$name" --hostname "$host" --network "$net" --ip "$ip" --cap-add NET_ADMIN \
     "${node_platform[@]}" "$node_image" sleep infinity >/dev/null
   docker cp tests/fake-pvecm "$name:/usr/local/bin/pvecm"
+  docker cp tests/fake-systemctl "$name:/usr/local/bin/systemctl"
   # The root ssh config Proxmox writes: one global Ciphers line, no Host block.
-  docker exec "$name" sh -c 'chmod 755 /usr/local/bin/pvecm && mkdir -p -m 700 /root/.ssh /etc/pve /run/sshd \
+  docker exec "$name" sh -c 'chmod 755 /usr/local/bin/pvecm /usr/local/bin/systemctl && mkdir -p -m 700 /root/.ssh /etc/pve /run/sshd \
     && ssh-keygen -q -t rsa -b 3072 -N "" -f /root/.ssh/id_rsa \
     && echo "Ciphers aes128-ctr,aes192-ctr,aes256-ctr,aes128-gcm@openssh.com,aes256-gcm@openssh.com,chacha20-poly1305@openssh.com" >/root/.ssh/config \
     && /usr/sbin/sshd'
@@ -236,7 +239,8 @@ if root_login true 2>/dev/null; then fail "a key got enrolled despite the wrong 
   fail "the wrong-host-key run changed the cluster"
 pass "qdevice-setup.sh stops on a wrong host key before it sends the code or changes the cluster"
 out="$(in_node2 qdevice-setup.sh "$addon_ip" --code "$code" --host-key "$key" --dry-run 2>&1)" || fail "dry run: $out"
-[[ "$out" == *"Planned changes"* && "$out" == *"pvecm qdevice remove"* && "$out" == *"Dry run: nothing was changed."* ]] ||
+[[ "$out" == *"What this script will do"* && "$out" == *"Do not run any of the commands below by hand"* &&
+  "$out" == *"pvecm qdevice remove"* && "$out" == *"Dry run: nothing was changed."* ]] ||
   fail "dry run output: $out"
 [ "$(in_node1 corosync-cmapctl -g quorum.device.net.host | sed 's/.*= //')" = "$dead_qnetd" ] || fail "the dry run changed the cluster"
 if in_node2 grep -q qnetd-pairing /root/.ssh/config; then fail "the dry run touched the ssh config"; fi
@@ -299,5 +303,24 @@ pass "open_pairing opens pairing with a new code"
 out="$(pair_login "$code" true 2>&1 </dev/null || true)"
 [[ "$out" == *"Permission denied"* ]] || fail "old code: $out"
 pass "the old code no longer works"
+
+step "9. Recovers when pvecm adds the QDevice but a daemon fails to start"
+in_node1 pvecm qdevice remove >/dev/null || fail "pvecm qdevice remove"
+# Corosync drops the vote a moment after the daemons stop, and later when they were still
+# reconnecting to the add-on that step 8 restarted. So wait for it instead of looking once.
+wait_for "both nodes to drop the QDevice vote" no_vote
+pass "pvecm qdevice remove took the QDevice away again"
+# FAKE_PVECM_START_FAILS makes fake-pvecm write the QDevice into corosync.conf and stop before
+# corosync reloads it, as pvecm did on a real Proxmox VE 9 node.
+out="$(docker exec -e FAKE_PVECM_START_FAILS=1 "$node1" \
+  qdevice-setup.sh "$addon_ip" --code "$new_code" --host-key "$(banner_key)" --yes 2>&1)" ||
+  fail "setup did not recover: $out"
+printf '%s\n' "$out" | sed 's/^/  | /'
+[[ "$out" == *"failed to start corosync-qdevice"* && "$out" == *"started corosync-qdevice on node1"* ]] ||
+  fail "no recovery in the output: $out"
+both_vote || fail "not both nodes count the vote after the recovery"
+pass "after pvecm fails to start the daemon, the script reloads corosync, starts it, and both nodes count the vote"
+wait_for "sshd to stop" sshd_stopped
+pass "pairing closed after the recovered setup"
 
 printf '\nAll checks passed.\n'

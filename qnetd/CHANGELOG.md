@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+- The setup command recovers when `pvecm qdevice setup` adds the QDevice but `corosync-qdevice` fails to start on a node with `Can't read quorum.device.model cmap key`. It reloads corosync.conf and starts the daemon again, then checks the vote. This happened on a real Proxmox VE 9 cluster.
+- The plan now says the script runs every step itself, so nobody runs `pvecm qdevice remove` by hand in the middle of a setup.
+- Failure messages from step 4 on say what has already changed, warn against running `pvecm qdevice` commands by hand, and say how to finish: run the same command again, with `open_pairing` if pairing has closed.
+
 ## 1.1.0
 
 - One-command setup. On first start the add-on opens pairing for 60 minutes and prints a command for a Proxmox node. The command checks the cluster, replaces a broken QDevice, runs `pvecm qdevice setup`, checks the vote, and closes pairing.

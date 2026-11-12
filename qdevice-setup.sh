@@ -20,7 +20,9 @@
 #   4. Prepares the cluster, only if step 1 found something to fix: installs
 #      corosync-qdevice, removes a QDevice that does not work, deletes leftover
 #      QDevice certificates.
-#   5. Runs Proxmox's own `pvecm qdevice setup <HA_IP>`, which does the real work.
+#   5. Runs Proxmox's own `pvecm qdevice setup <HA_IP>`, which does the real work. If pvecm
+#      adds the QDevice but a node's corosync-qdevice fails to start, reloads corosync.conf
+#      and starts corosync-qdevice again on that node.
 #   6. Waits until every node counts the QDevice vote.
 #   7. Tells the add-on to close pairing.
 #
@@ -29,7 +31,8 @@
 #     - installs the corosync-qdevice package, if missing (after you agree)
 #     - /etc/corosync/qdevice/: certificates for talking to the add-on (pvecm)
 #     - /etc/pve/corosync.conf: a quorum.device section (pvecm; the file is cluster-wide)
-#     - the corosync-qdevice service: enabled and started (pvecm)
+#     - the corosync-qdevice service: enabled and started (pvecm, or this script when
+#       pvecm fails to start it)
 #   On this node only, and only while the script runs:
 #     - /root/.ssh/config: a block between "# BEGIN qnetd-pairing" and "# END qnetd-pairing"
 #       at the top. pvecm always connects to port 22; this block sends its connections to
@@ -221,7 +224,7 @@ check_everything() {
 
   [ "$(id -u)" -eq 0 ] || die "run as root"
   local cmd
-  for cmd in pvecm corosync-quorumtool corosync-cmapctl ssh ssh-keyscan ssh-keygen timeout; do
+  for cmd in pvecm corosync-quorumtool corosync-cmapctl corosync-cfgtool systemctl awk ssh ssh-keyscan ssh-keygen timeout; do
     command -v "$cmd" >/dev/null || die "$cmd not found. Run this on a Proxmox VE node."
   done
   [ -f /root/.ssh/id_rsa ] && [ -f /root/.ssh/id_rsa.pub ] ||
@@ -300,20 +303,25 @@ check_everything() {
 # ---------------------------------------------------------------------------
 
 show_plan_and_confirm() {
-  step "Planned changes"
+  step "What this script will do"
   local n=0 key_fp
   key_fp="$(ssh-keygen -lf /root/.ssh/id_rsa.pub | awk '{print $2}')"
   plan() {
     n=$((n + 1))
     printf '      %d. %s\n' "$n" "$*"
   }
+  note "If you answer y, the script does each of these steps itself."
+  note "Do not run any of the commands below by hand."
+  note ""
   plan "Pair with the add-on at $ha_ip:$port, if its host key is $host_key, by sending"
   note "   this node's root public key ($key_fp) and the pairing code."
   [ "${#missing[@]}" -eq 0 ] || plan "Install corosync-qdevice with apt on: $(node_list "${missing[@]}")."
-  [ -z "$current" ] || plan "Run 'pvecm qdevice remove' to remove the QDevice at $current."
+  [ -z "$current" ] || plan "Remove the QDevice at $current (the script runs 'pvecm qdevice remove')."
   [ "${#stale[@]}" -eq 0 ] || plan "Delete /etc/corosync/qdevice/net/nssdb on: $(node_list "${stale[@]}")."
-  plan "Run 'pvecm qdevice setup $ha_ip ${pvecm_force[*]}'. It adds a quorum.device section to"
-  note "   /etc/pve/corosync.conf and enables corosync-qdevice on every node."
+  plan "Set up the QDevice at $ha_ip (the script runs 'pvecm qdevice setup $ha_ip ${pvecm_force[*]}')."
+  note "   This adds a quorum.device section to /etc/pve/corosync.conf and starts"
+  note "   corosync-qdevice on every node. If a node's daemon fails to start, the script"
+  note "   reloads corosync.conf and starts it again."
   plan "Close pairing on the add-on."
   note ""
   note "While this runs, a temporary block at the top of /root/.ssh/config points"
@@ -333,7 +341,7 @@ show_plan_and_confirm() {
   { : </dev/tty; } 2>/dev/null ||
     die "cannot ask for confirmation without a terminal. Run again with --yes to allow these changes. Nothing was changed."
   local answer=""
-  read -r -p $'\n      Make these changes? [y/N] ' answer </dev/tty || true
+  read -r -p $'\n      Let the script make these changes? [y/N] ' answer </dev/tty || true
   [[ "$answer" =~ ^[Yy] ]] || die "stopped. Nothing was changed."
 }
 
@@ -458,10 +466,69 @@ prepare_cluster() {
 # Steps 5 to 7: pvecm, the vote, and closing pairing
 # ---------------------------------------------------------------------------
 
+# Added to every failure from step 4 on, where the cluster may already be half changed.
+hands_off="This script does every step itself. Do not run 'pvecm qdevice remove' or 'pvecm qdevice setup' by hand."
+rerun="Run this same command again: it replaces a half-finished QDevice. If pairing has closed, turn on open_pairing in the add-on's configuration, restart the add-on, and use the new command from its log."
+
+# The QDevice host in corosync.conf, the file pvecm writes. corosync-cmapctl shows only what
+# corosync has loaded, which can lag behind the file. pvecm writes one brace per line.
+configured_host() {
+  local f=/etc/pve/corosync.conf
+  [ -f "$f" ] || f=/etc/corosync/corosync.conf
+  awk '{ sub(/#.*/, "") }
+    /[{]/ { name = $0; sub(/[ \t]*[{].*/, "", name); gsub(/[ \t]/, "", name); stack[++depth] = name; next }
+    /[}]/ { depth--; next }
+    depth >= 3 && stack[depth - 2] == "quorum" && stack[depth - 1] == "device" && stack[depth] == "net" && $1 == "host:" { print $2 }' "$f"
+}
+
+device_loaded_everywhere() {
+  local i
+  for i in "${!names[@]}"; do
+    on_node "$i" corosync-cmapctl -g quorum.device.model >/dev/null 2>&1 || return 1
+  done
+}
+
+# pvecm qdevice setup writes the quorum.device section, starts corosync-qdevice on each node, and
+# only then reloads corosync.conf. A node whose corosync has not loaded the new section yet fails
+# with "Can't read quorum.device.model cmap key", and pvecm stops before its reload. Seen on
+# Proxmox VE 9: the other node started, the node running pvecm did not.
+restart_qdevice() {
+  local s i failed=()
+  for s in $(seq 0 29); do
+    [ $((s % 5)) -ne 0 ] || corosync-cfgtool -R >/dev/null 2>&1 || true
+    device_loaded_everywhere && break
+    sleep 1
+  done
+  device_loaded_everywhere ||
+    die "corosync did not load the QDevice section on every node within 30 seconds. See 'corosync-cfgtool -s' and 'journalctl -b -u corosync'. $hands_off $rerun"
+  ok "corosync has loaded the QDevice section on every node"
+  for i in "${!names[@]}"; do
+    if on_node "$i" systemctl is-active --quiet corosync-qdevice; then
+      ok "corosync-qdevice is running on ${names[i]}"
+    elif on_node "$i" sh -c 'systemctl reset-failed corosync-qdevice 2>/dev/null || true; systemctl enable --quiet corosync-qdevice && systemctl start corosync-qdevice'; then
+      ok "started corosync-qdevice on ${names[i]}"
+    else
+      failed+=("$i")
+    fi
+  done
+  [ "${#failed[@]}" -eq 0 ] ||
+    die "corosync-qdevice still does not start on: $(node_list "${failed[@]}"). See 'journalctl -b -u corosync-qdevice' there. $hands_off $rerun"
+}
+
 run_pvecm_setup() {
   step "Running 'pvecm qdevice setup $ha_ip ${pvecm_force[*]}'"
-  pvecm qdevice setup "$ha_ip" "${pvecm_force[@]}" ||
-    die "pvecm qdevice setup failed. Fix the error above and run the same command again while pairing is open."
+  if pvecm qdevice setup "$ha_ip" "${pvecm_force[@]}"; then
+    return
+  fi
+  if [ "$(configured_host)" != "$ha_ip" ]; then
+    local removed=""
+    [ -z "$current" ] ||
+      removed=" The QDevice at $current was already removed in step 4, so the cluster has no tie-breaker until this finishes."
+    die "pvecm qdevice setup failed before it added the QDevice to corosync.conf.$removed Fix the error above. $hands_off $rerun"
+  fi
+  note "pvecm added the QDevice at $ha_ip to corosync.conf, then failed to start corosync-qdevice."
+  note "Reloading corosync.conf and starting corosync-qdevice again on every node."
+  restart_qdevice
 }
 
 wait_for_votes() {
@@ -471,7 +538,7 @@ wait_for_votes() {
     all_votes && break
     sleep 1
   done
-  all_votes || die "pvecm qdevice setup finished, but not every node counts the QDevice vote after 60 seconds. See 'pvecm status'."
+  all_votes || die "the QDevice at $ha_ip is configured, but not every node counts its vote after 60 seconds. See 'pvecm status', and 'journalctl -b -u corosync-qdevice' on each node. $hands_off $rerun"
   for i in "${!names[@]}"; do ok "${names[i]} counts the QDevice vote"; done
 }
 
