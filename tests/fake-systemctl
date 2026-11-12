@@ -1,0 +1,52 @@
+#!/bin/bash
+# Stands in for systemctl on the e2e test nodes, which run without systemd. It handles only
+# the corosync-qdevice unit, and only the verbs that qdevice-setup.sh and fake-pvecm use.
+#   systemctl is-active --quiet corosync-qdevice
+#   systemctl reset-failed corosync-qdevice
+#   systemctl enable [--quiet] corosync-qdevice
+#   systemctl start corosync-qdevice
+#   systemctl stop corosync-qdevice
+#   systemctl disable [--quiet] corosync-qdevice
+set -euo pipefail
+
+verb="${1:-}"
+unit="${*: -1}"
+[ "$unit" = corosync-qdevice ] || {
+  echo "fake systemctl: unsupported: $*" >&2
+  exit 1
+}
+running() { pgrep -f '^corosync-qdevice -f' >/dev/null; }
+
+case "$verb" in
+  is-active) running ;;
+  reset-failed | enable | disable) ;;
+  start)
+    running && exit 0
+    setsid corosync-qdevice -f </dev/null >>/tmp/corosync-qdevice.log 2>&1 &
+    # The real unit is Type=notify: start returns once the daemon is up, or fails if it exits.
+    sleep 2
+    running || {
+      echo "Job for corosync-qdevice.service failed because the control process exited with error code." >&2
+      exit 1
+    }
+    ;;
+  stop)
+    # Like the real unit, stop returns only once the daemon is gone. A daemon that is still
+    # shutting down keeps its vote registered with corosync and its lock file held.
+    pkill -f '^corosync-qdevice -f' || true
+    for _ in $(seq 100); do
+      running || exit 0
+      sleep 0.1
+    done
+    pkill -KILL -f '^corosync-qdevice -f' || true
+    sleep 1
+    if running; then
+      echo "Job for corosync-qdevice.service failed: the daemon did not stop." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "fake systemctl: unsupported: $*" >&2
+    exit 1
+    ;;
+esac
