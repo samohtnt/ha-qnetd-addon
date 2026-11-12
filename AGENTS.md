@@ -53,7 +53,9 @@ cover. Read it first. This file lists only the rules that are easy to break.
     `hadolint` and `shellcheck` are installed as binaries. It runs `hadolint - <qnetd/Dockerfile`,
     then `shellcheck -s bash - <"$f"` on every file in the union of the shellcheck list in the
     default branch's `tests/e2e.sh` and the list in the change, so a change can add a file but not
-    drop one. Then it runs `bash tests/check-version.sh /forge-base`, the release rule above.
+    drop one. Then, from `/work`, it runs the default branch's copy of the script,
+    `bash /forge-base/tests/check-version.sh /forge-base`, the release rule above, so a change
+    cannot weaken the script that judges it. The script checks the directory it is started in.
 
 - End-to-end test, which needs Bash, a Docker engine and the network, and runs in GitHub CI for
   `amd64` and `arm64`: `bash tests/e2e.sh`. See the README for `ADDON_PLATFORM` and `E2E_WAIT`.

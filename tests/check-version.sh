@@ -6,14 +6,19 @@
 # .github/workflows/ci.yaml does nothing when that tag exists, so a change to the script
 # without a new version never reaches users.
 #
-# Usage: bash tests/check-version.sh BASE
+# Usage: bash tests/check-version.sh BASE, run from the top of the tree to check.
 # BASE is a directory that holds the base's files (as forge's /forge-base does) or a git revision.
 # It needs only bash, coreutils and, for a git revision, git.
+#
+# It checks the directory it was started in, not the tree it lives in, so .forge/check can run
+# the default branch's copy (/forge-base/tests/check-version.sh) on the tree under test (/work).
+# A pull request then cannot weaken the check by changing this file.
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
-[ $# -eq 1 ] || { echo "usage: $0 BASE (a directory or a git revision)" >&2; exit 2; }
+[ $# -eq 1 ] || { echo "usage: $0 BASE (a directory or a git revision), run from the top of the tree to check" >&2; exit 2; }
 base="$1"
+[ -f qnetd/config.yaml ] && [ -f qdevice-setup.sh ] ||
+  { echo "FAIL  no qnetd/config.yaml and qdevice-setup.sh in $PWD; run this from the top of the tree to check" >&2; exit 2; }
 
 # Prints a file of the base, or fails when the base does not have it.
 base_file() {

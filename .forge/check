@@ -1,7 +1,8 @@
 #!/bin/bash
 # Runs the lint step of tests/e2e.sh ("0. Lint") the way it runs there: hadolint on
 # qnetd/Dockerfile from stdin, then shellcheck -s bash from stdin on each script in its list,
-# then tests/check-version.sh against the default branch (/forge-base) for the release rule.
+# then the default branch's tests/check-version.sh on /work against /forge-base for the release
+# rule. The script that decides comes from /forge-base, so a pull request cannot replace it.
 # The rest of tests/e2e.sh needs Docker, NET_ADMIN and the network, and stays in GitHub CI,
 # as does the add-on manifest linter (frenck/action-addon-linter).
 set -euo pipefail
@@ -33,8 +34,13 @@ while IFS= read -r f; do
   if shellcheck -s bash - <"$f"; then echo "PASS  shellcheck $f"; else failed+=("shellcheck $f"); fi
 done <<<"$files"
 
-echo "== tests/check-version.sh /forge-base"
-if bash tests/check-version.sh /forge-base; then echo "PASS  release version"; else failed+=("release version (tests/check-version.sh)"); fi
+# Run from /work, so the script checks the tree under test; the script itself is the default
+# branch's. Only before the default branch has the script (the change that adds it) does the
+# tree's own copy run.
+version_script=/forge-base/tests/check-version.sh
+[ -f "$version_script" ] || version_script=tests/check-version.sh
+echo "== $version_script /forge-base"
+if bash "$version_script" /forge-base; then echo "PASS  release version"; else failed+=("release version (tests/check-version.sh)"); fi
 
 if [ ${#failed[@]} -gt 0 ]; then
   finish "lint failed: ${failed[*]}" 1
