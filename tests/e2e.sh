@@ -2,7 +2,8 @@
 # End-to-end proof of the qnetd add-on and qdevice-setup.sh, using Docker.
 # Set ADDON_PLATFORM (for example linux/arm64) to build and run only the add-on for another platform.
 # Two node containers form a corosync cluster that plays the Proxmox cluster. tests/fake-pvecm
-# stands in for pvecm and runs the same commands as pvecm qdevice setup and remove.
+# stands in for pvecm and runs the same commands as pvecm qdevice setup and remove, and
+# tests/fake-systemctl stands in for systemctl, because the nodes run without systemd.
 set -euo pipefail
 # Git Bash rewrites arguments that look like POSIX paths (/data, /etc/...) into Windows paths.
 export MSYS_NO_PATHCONV=1
