@@ -3,5 +3,7 @@
 .forge/check
 # Holds the lint commands and the shellcheck file list the check reads.
 tests/e2e.sh
+# The release-version check that .forge/check runs.
+tests/check-version.sh
 # The hadolint ignore comments live in the Dockerfile itself.
 qnetd/Dockerfile

@@ -27,11 +27,14 @@ You need a Proxmox VE cluster with an even number of nodes, all online, and a fi
 - `qdevice-setup.sh` is the script the log tells you to run on a Proxmox node.
 - `qnetd/DOCS.md` is the guide that Home Assistant shows on the add-on page.
 - `tests/e2e.sh` is the end-to-end test, and `tests/fake-pvecm` stands in for `pvecm` in it.
+- `tests/check-version.sh` checks the release rule below.
 - `.github/workflows/ci.yaml` runs the Home Assistant add-on linter, and runs the end-to-end test for `amd64` and, under QEMU, for `aarch64`.
 
 ## Release
 
 The pairing command downloads `qdevice-setup.sh` from the tag `v<version>`, where the version comes from `qnetd/config.yaml`. When CI passes on `main`, its `tag` job creates that tag if it does not exist yet. Bump the version in `qnetd/config.yaml` for every change to `qdevice-setup.sh`, so the tag a user downloads always matches the add-on they run.
+
+`tests/check-version.sh BASE` checks this rule. It fails when `qdevice-setup.sh` differs from `BASE` (a directory or a git revision) but the version in `qnetd/config.yaml` is not higher than the one in `BASE`, and when the top `## ` heading of `qnetd/CHANGELOG.md` is not that version. `tests/e2e.sh` runs it on GitHub pull requests against the target branch, or against `VERSION_BASE` when you set it, and `.forge/check` runs it against the default branch. Run it from the top of the tree to check: it checks the directory it is started in, not the tree it lives in, so `.forge/check` runs the default branch's copy (`/forge-base/tests/check-version.sh`) on the change and a change cannot weaken it.
 
 ## Run the tests
 
