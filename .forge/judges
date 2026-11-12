@@ -1,0 +1,7 @@
+# Files that decide what .forge/check measures.
+.forge/image/Containerfile
+.forge/check
+# Holds the lint commands and the shellcheck file list the check reads.
+tests/e2e.sh
+# The hadolint ignore comments live in the Dockerfile itself.
+qnetd/Dockerfile

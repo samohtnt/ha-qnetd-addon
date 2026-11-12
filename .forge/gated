@@ -1,0 +1,13 @@
+# Auth, egress and secret paths.
+# Pairing SSH server, one-time code, key enrolment (AuthorizedKeysCommand, ForceCommand).
+qnetd/qnetd-pairing
+# Starts qnetd and pairing, handles the CA and the SSH host key under /data.
+qnetd/run.sh
+# Runs as root on Proxmox nodes: sends the root public key, writes /root/.ssh, SSHes between nodes.
+qdevice-setup.sh
+# Image users (the pair user), sshd install, removal of baked-in host keys.
+qnetd/Dockerfile
+# Exposed ports and Supervisor API access.
+qnetd/config.yaml
+# The tag job has contents: write and pushes tags users download qdevice-setup.sh from.
+.github/workflows/ci.yaml
