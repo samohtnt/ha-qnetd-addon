@@ -136,10 +136,22 @@ hadolint_image=hadolint/hadolint:v2.15.1
 shellcheck_image=koalaman/shellcheck:v0.11.0
 docker run --rm -i "$hadolint_image" <qnetd/Dockerfile || fail "hadolint qnetd/Dockerfile"
 pass "hadolint qnetd/Dockerfile"
-for f in qnetd/run.sh qnetd/qnetd-pairing qdevice-setup.sh tests/fake-pvecm tests/fake-systemctl tests/e2e.sh; do
+for f in qnetd/run.sh qnetd/qnetd-pairing qdevice-setup.sh tests/fake-pvecm tests/fake-systemctl tests/e2e.sh tests/check-version.sh; do
   docker run --rm -i "$shellcheck_image" -s bash - <"$f" || fail "shellcheck $f"
   pass "shellcheck $f"
 done
+# The release rule: a change to qdevice-setup.sh needs a new version and CHANGELOG entry. On a
+# GitHub pull request the base is the target branch; elsewhere set VERSION_BASE to a git revision.
+version_base="${VERSION_BASE:-}"
+if [ -n "${GITHUB_BASE_REF:-}" ]; then
+  git fetch -q --no-tags --depth=1 origin "$GITHUB_BASE_REF" || fail "git fetch origin $GITHUB_BASE_REF"
+  version_base=FETCH_HEAD
+fi
+if [ -n "$version_base" ]; then
+  bash tests/check-version.sh "$version_base" || fail "tests/check-version.sh $version_base"
+else
+  echo "SKIP  tests/check-version.sh: no base (not a pull request and VERSION_BASE unset)"
+fi
 
 step "1. Image builds"
 docker build -q "${platform[@]}" -t "$image" qnetd >/dev/null || fail "add-on image build"

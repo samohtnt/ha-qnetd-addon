@@ -10,7 +10,9 @@ cover. Read it first. This file lists only the rules that are easy to break.
 - For every change to `qdevice-setup.sh`, bump `version` in `qnetd/config.yaml` and add a
   `## <version>` entry at the top of `qnetd/CHANGELOG.md`.
 - Without a bump, the `tag` job in `.github/workflows/ci.yaml` finds the tag already there and does
-  nothing, so users keep downloading the old script. Nothing checks this for you.
+  nothing, so users keep downloading the old script. `tests/check-version.sh` catches a missing bump
+  or CHANGELOG entry: `.forge/check` runs it against the default branch, and `tests/e2e.sh` runs it
+  on GitHub pull requests. Run `bash tests/check-version.sh origin/main` before you commit.
 - Do not create or push tags by hand; the `tag` job does it on `main`.
 
 ## Dockerfile
@@ -36,7 +38,7 @@ cover. Read it first. This file lists only the rules that are easy to break.
     hadolint_image=hadolint/hadolint:v2.15.1
     shellcheck_image=koalaman/shellcheck:v0.11.0
     docker run --rm -i "$hadolint_image" <qnetd/Dockerfile
-    for f in qnetd/run.sh qnetd/qnetd-pairing qdevice-setup.sh tests/fake-pvecm tests/e2e.sh; do
+    for f in qnetd/run.sh qnetd/qnetd-pairing qdevice-setup.sh tests/fake-pvecm tests/fake-systemctl tests/e2e.sh tests/check-version.sh; do
       docker run --rm -i "$shellcheck_image" -s bash - <"$f"
     done
     ```
@@ -51,7 +53,7 @@ cover. Read it first. This file lists only the rules that are easy to break.
     `hadolint` and `shellcheck` are installed as binaries. It runs `hadolint - <qnetd/Dockerfile`,
     then `shellcheck -s bash - <"$f"` on every file in the union of the shellcheck list in the
     default branch's `tests/e2e.sh` and the list in the change, so a change can add a file but not
-    drop one.
+    drop one. Then it runs `bash tests/check-version.sh /forge-base`, the release rule above.
 
 - End-to-end test, which needs Bash, a Docker engine and the network, and runs in GitHub CI for
   `amd64` and `arm64`: `bash tests/e2e.sh`. See the README for `ADDON_PLATFORM` and `E2E_WAIT`.
