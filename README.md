@@ -43,7 +43,7 @@ bash tests/e2e.sh
 
 To test the add-on for another platform, set `ADDON_PLATFORM`, for example `ADDON_PLATFORM=linux/arm64`. Only the add-on runs on that platform. The node containers stay native, as real `amd64` Proxmox hosts would. On an `amd64` host that needs QEMU emulation, and `E2E_WAIT=180` gives the slower emulated add-on time to start.
 
-The script lints the shell scripts and the `Dockerfile`, builds the add-on image and a node image, and starts two node containers as a corosync cluster. The cluster starts with a QDevice configured at an address where nothing runs, and a stale certificate store, like a cluster whose old tie-breaker is gone. The script then checks the following:
+The script lints the shell scripts with ShellCheck and the `Dockerfile` with hadolint, at fixed versions (`koalaman/shellcheck:v0.11.0` and `hadolint/hadolint:v2.15.1`, set at the top of its lint step), so new lint rules arrive only when someone bumps those tags. It then builds the add-on image and a node image, and starts two node containers as a corosync cluster. The cluster starts with a QDevice configured at an address where nothing runs, and a stale certificate store, like a cluster whose old tie-breaker is gone. The script then checks the following:
 
 - On a fresh install, `corosync-qnetd` runs as `coroqnetd` and answers on TCP 5403, pairing opens, and the log shows the command with a code and the host key the server presents.
 - Pairing refuses root before a key is enrolled and refuses a wrong code. The `pair` user can only enrol a key. `qdevice-setup.sh` stops on a wrong host key before it sends the code or changes the cluster.
