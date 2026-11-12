@@ -27,14 +27,21 @@ cover. Read it first. This file lists only the rules that are easy to break.
 
 ## Checks
 
-- Lint, which runs locally without Docker and in forge (`.forge/check`):
+- Lint runs in two places, with the same tools and the same file list:
+  - Step "0. Lint" of `tests/e2e.sh`, which needs Docker. It reads the Dockerfile and each script on
+    stdin:
 
-  ```sh
-  hadolint qnetd/Dockerfile
-  for f in qnetd/run.sh qnetd/qnetd-pairing qdevice-setup.sh tests/fake-pvecm tests/e2e.sh; do
-    shellcheck -s bash "$f"
-  done
-  ```
+    ```sh
+    docker run --rm -i hadolint/hadolint <qnetd/Dockerfile
+    for f in qnetd/run.sh qnetd/qnetd-pairing qdevice-setup.sh tests/fake-pvecm tests/e2e.sh; do
+      docker run --rm -i koalaman/shellcheck:stable -s bash - <"$f"
+    done
+    ```
+
+  - `.forge/check`, which runs in forge in the image from `.forge/image/Containerfile`, where
+    `hadolint` and `shellcheck` are installed as binaries. It runs `hadolint - <qnetd/Dockerfile`, then `shellcheck -s bash - <"$f"` on every file
+    in the union of the shellcheck list in the default branch's `tests/e2e.sh` and the list in the
+    change, so a change can add a file but not drop one.
 
 - End-to-end test, which needs Bash, a Docker engine and the network, and runs in GitHub CI for
   `amd64` and `arm64`: `bash tests/e2e.sh`. See the README for `ADDON_PLATFORM` and `E2E_WAIT`.
