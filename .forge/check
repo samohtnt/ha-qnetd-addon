@@ -1,0 +1,38 @@
+#!/bin/bash
+# Runs the lint step of tests/e2e.sh ("0. Lint") the way it runs there: hadolint on
+# qnetd/Dockerfile from stdin, then shellcheck -s bash from stdin on each script in its list.
+# The rest of tests/e2e.sh needs Docker, NET_ADMIN and the network, and stays in GitHub CI,
+# as does the add-on manifest linter (frenck/action-addon-linter).
+set -euo pipefail
+cd /work
+out=/forge-out/summary
+
+finish() { printf '%s\n' "$1" >"$out"; echo "$1"; exit "$2"; }
+
+# The shellcheck file list is the one in tests/e2e.sh. A pull request may add to it,
+# but the default branch's list (/forge-base) always runs too, so none can drop a file.
+list_in() { sed -n 's/^for f in \(.*\); do$/\1/p' "$1"; }
+base_list=$(list_in /forge-base/tests/e2e.sh)
+head_list=$(list_in tests/e2e.sh 2>/dev/null || true)
+[ -n "$base_list" ] || finish "no shellcheck file list found in the default branch's tests/e2e.sh" 1
+# shellcheck disable=SC2086 # the lists are space-separated paths, as in tests/e2e.sh
+files=$(printf '%s\n' $base_list $head_list | awk '!seen[$0]++')
+
+failed=()
+echo "== hadolint qnetd/Dockerfile ($(hadolint --version))"
+if hadolint - <qnetd/Dockerfile; then echo "PASS  hadolint qnetd/Dockerfile"; else failed+=("hadolint qnetd/Dockerfile"); fi
+
+echo "== shellcheck ($(shellcheck --version | sed -n 's/^version: //p'))"
+n=0
+while IFS= read -r f; do
+  n=$((n + 1))
+  if [ ! -f "$f" ]; then
+    echo "FAIL  $f is in the list but missing"; failed+=("missing $f"); continue
+  fi
+  if shellcheck -s bash - <"$f"; then echo "PASS  shellcheck $f"; else failed+=("shellcheck $f"); fi
+done <<<"$files"
+
+if [ ${#failed[@]} -gt 0 ]; then
+  finish "lint failed: ${failed[*]}" 1
+fi
+finish "hadolint qnetd/Dockerfile and shellcheck on $n scripts: clean" 0
