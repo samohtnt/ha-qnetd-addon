@@ -1,5 +1,5 @@
 # The lint tools tests/e2e.sh runs ("0. Lint"), as static binaries from the same images it uses,
-# pinned by digest: koalaman/shellcheck:stable and hadolint/hadolint (latest) as of 2026-11-12.
+# pinned by digest: koalaman/shellcheck:v0.11.0 and hadolint/hadolint:v2.15.1, the tags tests/e2e.sh uses.
 # The base is the distro the add-on and the e2e node use, and gives the check bash and coreutils.
 FROM koalaman/shellcheck@sha256:bb596a0d169b85ddd81d8b6d3a2ff6d5baf5fca10b97f575ebc647c3dff62b3d AS shellcheck
 FROM hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d AS hadolint
