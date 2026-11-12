@@ -129,10 +129,14 @@ quorate() { votes_on "$node1" | grep -qE '^Quorate: +Yes'; }
 cluster_listed() { in_addon corosync-qnetd-tool -l | grep -q 'Cluster "e2e"'; }
 
 step "0. Lint"
-docker run --rm -i hadolint/hadolint <qnetd/Dockerfile || fail "hadolint qnetd/Dockerfile"
+# Fixed lint versions, so a new upstream release cannot turn CI red on an unchanged commit.
+# Keep them in step with the tools .forge/image/Containerfile installs.
+hadolint_image=hadolint/hadolint:v2.15.1
+shellcheck_image=koalaman/shellcheck:v0.11.0
+docker run --rm -i "$hadolint_image" <qnetd/Dockerfile || fail "hadolint qnetd/Dockerfile"
 pass "hadolint qnetd/Dockerfile"
 for f in qnetd/run.sh qnetd/qnetd-pairing qdevice-setup.sh tests/fake-pvecm tests/fake-systemctl tests/e2e.sh; do
-  docker run --rm -i koalaman/shellcheck:stable -s bash - <"$f" || fail "shellcheck $f"
+  docker run --rm -i "$shellcheck_image" -s bash - <"$f" || fail "shellcheck $f"
   pass "shellcheck $f"
 done
 
